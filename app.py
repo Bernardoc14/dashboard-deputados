@@ -66,25 +66,56 @@ def carregar_tudo():
         
         if col_ementa and col_id:
             df_prop['ementa'] = df_prop[col_ementa].astype(str).str.replace('"', '')
-            # PADRONIZAÇÃO CRÍTICA: Transforma o ID da proposição no mesmo formato de string limpa
             df_prop['idProposicao_link'] = df_prop[col_id].astype(str).str.split('.').str[0].str.strip()
-            
-            # Agora o merge funciona perfeitamente ligando string com string correta!
+
+            col_keywords = next((col for col in df_prop.columns if 'keyword' in col.lower()), None)
+            colunas_prop = ['idProposicao_link', 'ementa']
+            if col_keywords:
+                colunas_prop.append(col_keywords)
+                df_prop = df_prop.rename(columns={col_keywords: 'keywords'})
+
             df_temas = pd.merge(
-                df_autores[['idProposicao_link', 'id_oficial']], 
-                df_prop[['idProposicao_link', 'ementa']], 
-                on='idProposicao_link', 
+                df_autores[['idProposicao_link', 'id_oficial']],
+                df_prop[colunas_prop],
+                on='idProposicao_link',
                 how='inner'
             )
+            if 'keywords' not in df_temas.columns:
+                df_temas['keywords'] = ''
         else:
-            df_temas = pd.DataFrame(columns=['idProposicao_link', 'id_oficial', 'ementa'])
+            df_temas = pd.DataFrame(columns=['idProposicao_link', 'id_oficial', 'ementa', 'keywords'])
     else:
-        df_temas = pd.DataFrame(columns=['idProposicao_link', 'id_oficial', 'ementa'])
+        df_temas = pd.DataFrame(columns=['idProposicao_link', 'id_oficial', 'ementa', 'keywords'])
 
-    return df_principal, frequencia_partido, df_autores, df_temas
+    # E. CLASSIFICAÇÃO TEMÁTICA (P2)
+    TEMAS_KEYWORDS = {
+        'Saúde':          ['saúde', 'médic', 'hospital', 'sus', 'doença', 'farmac', 'vacin', 'enferm', 'sanitár', 'anvisa', 'medicamento'],
+        'Educação':       ['educaç', 'escola', 'ensino', 'universidade', 'professor', 'aluno', 'magistério', 'bolsa', 'enem', 'fundeb', 'creche'],
+        'Segurança':      ['segurança', 'polici', 'crime', 'pena', 'presídio', 'violência', 'penal', 'armamento', 'arma', 'tráfico'],
+        'Tributário':     ['tribut', 'imposto', 'taxa', 'fiscal', 'icms', 'iss', 'irpf', 'receita federal', 'alíquota', 'contribuição'],
+        'Econômico':      ['econom', 'indústria', 'comercio', 'empresa', 'empreend', 'crédito', 'banco', 'financ', 'mercado', 'investimento'],
+        'Ambiental':      ['ambient', 'floresta', 'desmatamento', 'clima', 'carbono', 'sustentáv', 'poluiç', 'resíduo', 'biodiversidade'],
+        'Infraestrutura': ['infraestrutura', 'rodovia', 'ferrovia', 'porto', 'aeroporto', 'saneamento', 'habitação', 'obras', 'energia elétrica'],
+        'Social':         ['social', 'família', 'criança', 'idoso', 'mulher', 'pessoa com deficiência', 'vulneráv', 'pobreza', 'bolsa família'],
+        'Agropecuário':   ['agrícol', 'agropec', 'rural', 'agricultor', 'pecuári', 'soja', 'agroneg'],
+    }
+
+    def classificar_tema(row):
+        texto = (str(row.get('keywords', '')) + ' ' + str(row.get('ementa', ''))).lower()
+        scores = {tema: sum(1 for p in palavras if p in texto) for tema, palavras in TEMAS_KEYWORDS.items()}
+        scores = {k: v for k, v in scores.items() if v > 0}
+        return max(scores, key=scores.get) if scores else None
+
+    if not df_temas.empty:
+        df_temas['tema'] = df_temas.apply(classificar_tema, axis=1)
+        df_temas_classificado = df_temas.dropna(subset=['tema'])
+    else:
+        df_temas_classificado = pd.DataFrame(columns=['idProposicao_link', 'id_oficial', 'ementa', 'keywords', 'tema'])
+
+    return df_principal, frequencia_partido, df_autores, df_temas, df_temas_classificado, TEMAS_KEYWORDS
 
 # --- EXECUÇÃO DO CARREGAMENTO ---
-df_principal, df_freq, df_autores, df_temas = carregar_tudo()
+df_principal, df_freq, df_autores, df_temas, df_temas_classificado, TEMAS_KEYWORDS = carregar_tudo()
 
 # --- FILTROS LATERAIS ---
 st.sidebar.header("🔍 Filtros Globais")
@@ -126,6 +157,167 @@ fig_p1.update_layout(yaxis={'categoryorder':'total ascending'}, height=400 + (n_
 st.plotly_chart(fig_p1, use_container_width=True)
 st.divider()
 
+# --- SEÇÃO P2 (AGRUPAMENTO TEMÁTICO) ---
+st.header("🗂️ P2 — Agrupamento por Eixo Temático de Atuação")
+
+if df_temas_classificado.empty:
+    st.warning("Nenhuma proposição classificada encontrada. Verifique se os arquivos proposicoes-*.csv estão na pasta dados/.")
+else:
+    # Montar perfil temático por deputado (todos os temas, não só o dominante)
+    ids_filtrados = df_filtrado['id_oficial'].unique()
+    df_tc_filtrado = df_temas_classificado[df_temas_classificado['id_oficial'].isin(ids_filtrados)]
+
+    # Contagem de proposições por deputado+tema
+    perfil_dep = df_tc_filtrado.groupby(['id_oficial', 'tema']).size().reset_index(name='qtd')
+    # Tema dominante de cada deputado
+    idx_max = perfil_dep.groupby('id_oficial')['qtd'].idxmax()
+    tema_dominante = perfil_dep.loc[idx_max][['id_oficial', 'tema']].rename(columns={'tema': 'tema_dominante'})
+
+    # Contagem de deputados por tema dominante
+    contagem_temas = tema_dominante['tema_dominante'].value_counts().reset_index()
+    contagem_temas.columns = ['Tema', 'Deputados']
+
+    # Contagem de proposições por tema (para o gráfico de barras)
+    prop_por_tema = df_tc_filtrado['tema'].value_counts().reset_index()
+    prop_por_tema.columns = ['Tema', 'Proposições']
+
+    CORES_TEMAS = {
+        'Saúde': '#e74c3c', 'Educação': '#3498db', 'Segurança': '#2c3e50',
+        'Tributário': '#f39c12', 'Econômico': '#27ae60', 'Ambiental': '#1abc9c',
+        'Infraestrutura': '#8e44ad', 'Social': '#e91e63', 'Agropecuário': '#795548',
+    }
+
+    tab_p2a, tab_p2b, tab_p2c, tab_p2d = st.tabs([
+        "📊 Proposições por Tema", "👥 Deputados por Tema", "🔍 Perfil Individual", "☁️ Nuvem por Tema"
+    ])
+
+    with tab_p2a:
+        fig_p2a = px.bar(
+            prop_por_tema.sort_values('Proposições'), x='Proposições', y='Tema', orientation='h',
+            color='Tema', color_discrete_map=CORES_TEMAS,
+            text_auto=True, template=template_grafico,
+            title="Total de proposições classificadas por eixo temático"
+        )
+        fig_p2a.update_layout(
+            yaxis={'categoryorder': 'total ascending'},
+            showlegend=False,
+            height=450,
+            bargap=0.3,
+            margin=dict(l=20, r=20, t=50, b=20),
+        )
+        fig_p2a.update_traces(textposition='outside', cliponaxis=False)
+        st.plotly_chart(fig_p2a, use_container_width=True)
+
+    with tab_p2b:
+        fig_p2b = px.bar(
+            contagem_temas.sort_values('Deputados'), x='Deputados', y='Tema', orientation='h',
+            color='Tema', color_discrete_map=CORES_TEMAS,
+            text_auto=True, template=template_grafico,
+            title="Número de deputados cujo tema principal de atuação é cada eixo"
+        )
+        fig_p2b.update_layout(
+            yaxis={'categoryorder': 'total ascending'},
+            showlegend=False,
+            height=450,
+            bargap=0.15,
+            bargroupgap=0.05,
+            margin=dict(l=20, r=60, t=50, b=20),
+        )
+        fig_p2b.update_traces(
+            texttemplate='%{x}',
+            textposition='outside',
+            cliponaxis=False,
+            insidetextanchor='middle',
+        )
+        st.plotly_chart(fig_p2b, use_container_width=True)
+
+        st.subheader("Lista de Deputados por Tema Dominante")
+        tema_filtro = st.selectbox("Selecione o tema:", sorted(contagem_temas['Tema'].tolist()), key='tema_lista')
+        deps_tema = tema_dominante[tema_dominante['tema_dominante'] == tema_filtro]['id_oficial'].tolist()
+        # Buscar nomes
+        nomes_tema = df_filtrado[df_filtrado['id_oficial'].isin(deps_tema)][['txNomeParlamentar','sgPartido','sgUF']].drop_duplicates().sort_values('txNomeParlamentar').reset_index(drop=True)
+        nomes_tema.columns = ['Nome', 'Partido', 'UF']
+        st.caption(f"{len(nomes_tema)} deputado(s) com tema dominante: **{tema_filtro}**")
+        st.dataframe(nomes_tema, use_container_width=True, hide_index=True)
+
+    with tab_p2c:
+        lista_deps_p2 = sorted(df_filtrado['txNomeParlamentar'].dropna().unique())
+        dep_p2 = st.selectbox("Selecione o deputado:", lista_deps_p2, key='dep_p2')
+        id_dep_p2 = df_filtrado[df_filtrado['txNomeParlamentar'] == dep_p2]['id_oficial'].iloc[0] if not df_filtrado[df_filtrado['txNomeParlamentar'] == dep_p2].empty else None
+
+        if id_dep_p2:
+            perfil_ind = df_temas_classificado[df_temas_classificado['id_oficial'] == id_dep_p2]['tema'].value_counts().reset_index()
+            perfil_ind.columns = ['Tema', 'Proposições']
+            if perfil_ind.empty:
+                st.info(f"{dep_p2} não possui proposições classificadas nos eixos temáticos.")
+            else:
+                fig_ind_p2 = px.pie(
+                    perfil_ind, values='Proposições', names='Tema',
+                    color='Tema', color_discrete_map=CORES_TEMAS,
+                    hole=0.4, template=template_grafico,
+                    title=f"Distribuição temática — {dep_p2}"
+                )
+                st.plotly_chart(fig_ind_p2, use_container_width=True)
+
+    with tab_p2d:
+        ruido_nuvem = {
+            'da', 'do', 'de', 'que', 'em', 'para', 'um', 'uma', 'os', 'as', 'ao', 'aos', 'com', 'por',
+            'pela', 'pelo', 'dos', 'das', 'pelos', 'pelas', 'nos', 'nas', 'sob', 'sobre', 'como',
+            'na', 'no', 'ou', 'se', 'o', 'a', 'e', 'através', 'seu', 'sua', 'deste', 'desta',
+            'à', 'às', 'aquele', 'aquela',
+            'lei', 'altera', 'dispõe', 'institui', 'cria', 'art', 'projeto', 'requerimento', 'requer',
+            'parecer', 'pauta', 'comissão', 'retirada', 'matéria', 'moção', 'louvor', 'prestados',
+            'regozijo', 'nominal', 'realização', 'excelentes', 'substitutivo', 'ric', 'exarado',
+            'adiamento', 'outras', 'pdl', 'termo', 'termos', 'dep', 'uor',
+            'público', 'pública', 'públicos', 'públicas', 'fim', 'fins', 'acerca', 'objeto', 'âmbito',
+            'pl', 'sr', 'sra', 'srª', 'srs', 'voto', 'votos', 'convida',
+            'determina', 'manifesta', 'manifestação', 'encaminha', 'reitera', 'indica', 'indicação',
+            'proíbe', 'torna', 'obriga', 'concede', 'autoriza', 'autorização', 'instituído', 'criado',
+            'alterado', 'destinado', 'fixa', 'senhor', 'senhora', 'silva', 'santos', 'oliveira',
+            'souza', 'melo', 'outros', 'bancada', 'partido', 'liderança', 'líder', 'bloco', 'membro',
+            'membros', 'visto', 'ter', 'haver', 'meio', 'forma', 'efeito', 'caso', 'prazo',
+            'dia', 'dias', 'ano', 'anos', 'data', 'janeiro', 'fevereiro', 'março', 'abril', 'maio',
+            'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro', 'brasil',
+            'república', 'ccjc', 'cft', 'ccj', 'sgt', 'plen', 'avulso', 'pec', 'plp',
+            'mpv', 'inc', 'rpd', 'prl', 'par', 'n', 'nº', 'dá', 'sem',
+            'nacional', 'federal', 'estadual', 'municipal', 'deputado', 'câmara', 'senado',
+            'congresso', 'mesa', 'plenário', 'regime', 'urgência', 'urgente', 'decreto',
+            'estabelece', 'adotado', 'solene', 'dispor', 'convocação', 'votação', 'aprovação',
+            'providências', 'informações', 'relator', 'relatora', 'artigo', 'proposição',
+            'solicita', 'sugere', 'debater', 'discussão', 'audiência', 'redação', 'apreciação',
+            'emenda', 'adoção', 'inclusão', 'ato', 'legislativa',
+        }
+        tema_nuvem = st.selectbox("Selecione o eixo temático:", sorted(TEMAS_KEYWORDS.keys()), key='tema_nuvem')
+
+        ementas_tema = df_tc_filtrado[df_tc_filtrado['tema'] == tema_nuvem]['ementa'].dropna()
+        if len(ementas_tema) == 0:
+            st.warning("Nenhuma ementa encontrada para este tema com os filtros atuais.")
+        else:
+            texto_tema = " ".join(ementas_tema.astype(str)).lower()
+            texto_tema = " ".join(texto_tema.split())
+            try:
+                wc_tema = WordCloud(
+                    width=1400, height=600,
+                    background_color='white',
+                    stopwords=ruido_nuvem,
+                    colormap='tab10',
+                    min_font_size=10,
+                    max_words=80,
+                    collocations=False,
+                    regexp=r"\b[a-zA-ZáéíóúçãõâêôàÀíÍóÓúÚáÁéÉãÃõÕçÇ]+\b"
+                ).generate(texto_tema)
+                fig_nuvem_tema, ax_nt = plt.subplots(figsize=(14, 6))
+                ax_nt.imshow(wc_tema, interpolation='bilinear')
+                ax_nt.axis('off')
+                plt.tight_layout(pad=0)
+                st.pyplot(fig_nuvem_tema)
+                plt.close(fig_nuvem_tema)
+                st.caption(f"Nuvem gerada a partir de {len(ementas_tema)} proposições classificadas como **{tema_nuvem}**")
+            except ValueError:
+                st.info("Texto insuficiente após filtragem para gerar a nuvem.")
+
+st.divider()
+
 # --- SEÇÃO P4 (ESCOLARIDADE) ---
 st.header("🎓 P4 — Perfil por Escolaridade")
 df_u = df_filtrado.drop_duplicates(subset=['id_oficial'])
@@ -135,6 +327,13 @@ esc_data.columns = ['Escolaridade', 'Qtd']
 fig_p4 = px.bar(esc_data, x='Qtd', y='Escolaridade', orientation='h', color='Qtd', color_continuous_scale='Blues', text_auto=True, template=template_grafico)
 fig_p4.update_layout(yaxis={'categoryorder':'total ascending'})
 st.plotly_chart(fig_p4, use_container_width=True)
+
+escolaridades_disp = esc_data['Escolaridade'].tolist()
+esc_sel = st.selectbox("Ver deputados por escolaridade:", escolaridades_disp, key='esc_sel')
+deps_esc = df_u[df_u['escolaridade'] == esc_sel][['txNomeParlamentar', 'sgPartido', 'sgUF']].drop_duplicates().sort_values('txNomeParlamentar').reset_index(drop=True)
+deps_esc.columns = ['Nome', 'Partido', 'UF']
+st.caption(f"{len(deps_esc)} deputado(s) com escolaridade: **{esc_sel}**")
+st.dataframe(deps_esc, use_container_width=True, hide_index=True)
 
 # --- SEÇÃO P11 (RANKING DE PARTIDOS) ---
 st.header("📊 P11 — Ranking de Partidos")
