@@ -3,7 +3,6 @@ import pandas as pd
 import plotly.express as px
 import os
 import glob
-import csv
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 
@@ -15,11 +14,14 @@ template_grafico = "plotly_white"
 def carregar_tudo():
     # A. GASTOS + PERFIL (P1, P4, P13)
     arquivos_gastos = glob.glob(os.path.join('dados', 'Ano-*.csv'))
-    df_gastos = pd.concat([pd.read_csv(f, sep=';', encoding='utf-8') for f in arquivos_gastos], ignore_index=True)
-    df_gastos['id_oficial'] = pd.to_numeric(df_gastos['ideCadastro'], errors='coerce')
+    df_gastos = pd.concat([pd.read_csv(f, sep=';', encoding='utf-8', low_memory=False) for f in arquivos_gastos], ignore_index=True)
+    
+    # Padroniza ideCadastro removendo ponto flutuante (.0) e espaços
+    df_gastos['id_oficial'] = df_gastos['ideCadastro'].astype(str).str.split('.').str[0].str.strip()
     
     df_dep = pd.read_csv(os.path.join('dados', 'deputados_detalhado.csv'), sep=';', encoding='utf-8')
-    df_dep['id_oficial'] = df_dep['uri'].str.split('/').str[-1].str.strip().apply(pd.to_numeric, errors='coerce')
+    # Padroniza o ID extraído da URL do deputado
+    df_dep['id_oficial'] = df_dep['uri'].str.split('/').str[-1].str.strip().astype(str).str.split('.').str[0]
     
     df_principal = pd.merge(df_gastos, df_dep[['id_oficial', 'siglaSexo', 'escolaridade']], on='id_oficial', how='left')
     df_principal['escolaridade'] = df_principal['escolaridade'].fillna('Não Informado')
@@ -28,7 +30,7 @@ def carregar_tudo():
     arquivos_presenca = glob.glob(os.path.join('dados', 'eventosPresencaDeputados-*.csv'))
     if arquivos_presenca:
         df_pres = pd.concat([pd.read_csv(f, sep=';', encoding='utf-8') for f in arquivos_presenca], ignore_index=True)
-        df_pres['id_oficial'] = pd.to_numeric(df_pres['idDeputado'], errors='coerce')
+        df_pres['id_oficial'] = df_pres['idDeputado'].astype(str).str.split('.').str[0].str.strip()
         total_eventos = df_pres['idEvento'].nunique()
         presencas_por_deputado = df_pres.groupby('id_oficial').size() / total_eventos * 100
         mapeamento_partido = df_principal[['id_oficial', 'sgPartido']].drop_duplicates()
@@ -41,32 +43,43 @@ def carregar_tudo():
     # C. PRODUÇÃO (P11b)
     arquivos_autores = glob.glob(os.path.join('dados', 'proposicoesAutores-*.csv'))
     df_autores = pd.concat([pd.read_csv(f, sep=';', encoding='utf-8') for f in arquivos_autores], ignore_index=True)
-    df_autores['id_oficial'] = pd.to_numeric(df_autores['idDeputadoAutor'], errors='coerce')
     
-    # D. EMENTAS PARA NUVEM (P11d) - COM FIX PARA BUFFER OVERFLOW
+    # PADRONIZAÇÃO CRÍTICA: Transforma os IDs de Autores em texto limpo sem ".0"
+    df_autores['id_oficial'] = df_autores['idDeputadoAutor'].astype(str).str.split('.').str[0].str.strip()
+    df_autores['idProposicao_link'] = df_autores['idProposicao'].astype(str).str.split('.').str[0].str.strip()
+    
+    # D. EMENTAS PARA NUVEM (P11d)
     arquivos_prop = glob.glob(os.path.join('dados', 'proposicoes-*.csv'))
     lista_prop = []
     for f in arquivos_prop:
         try:
-            df_temp = pd.read_csv(f, sep=';', encoding='utf-8', on_bad_lines='skip', quoting=csv.QUOTE_NONE, engine='python')
+            df_temp = pd.read_csv(f, sep=';', encoding='utf-8', on_bad_lines='skip')
             lista_prop.append(df_temp)
         except Exception as e:
             print(f"Erro ao tentar ler o arquivo {f}: {e}")
             
     if lista_prop:
         df_prop = pd.concat(lista_prop, ignore_index=True)
+        
         col_ementa = next((col for col in df_prop.columns if 'ementa' in col.lower()), None)
-        col_id = 'id' if 'id' in df_prop.columns else next((col for col in df_prop.columns if 'idproposicao' in col.lower() or 'id_proposicao' in col.lower()), None)
+        col_id = next((col for col in df_prop.columns if col.lower() in ['id', 'idproposicao', 'id_proposicao']), None)
         
         if col_ementa and col_id:
             df_prop['ementa'] = df_prop[col_ementa].astype(str).str.replace('"', '')
-            df_autores['idProposicao'] = df_autores['idProposicao'].astype(str)
-            df_prop[col_id] = df_prop[col_id].astype(str)
-            df_temas = pd.merge(df_autores[['idProposicao', 'id_oficial']], df_prop[[col_id, 'ementa']], left_on='idProposicao', right_on=col_id)
+            # PADRONIZAÇÃO CRÍTICA: Transforma o ID da proposição no mesmo formato de string limpa
+            df_prop['idProposicao_link'] = df_prop[col_id].astype(str).str.split('.').str[0].str.strip()
+            
+            # Agora o merge funciona perfeitamente ligando string com string correta!
+            df_temas = pd.merge(
+                df_autores[['idProposicao_link', 'id_oficial']], 
+                df_prop[['idProposicao_link', 'ementa']], 
+                on='idProposicao_link', 
+                how='inner'
+            )
         else:
-            df_temas = pd.DataFrame(columns=['idProposicao', 'id_oficial', 'ementa'])
+            df_temas = pd.DataFrame(columns=['idProposicao_link', 'id_oficial', 'ementa'])
     else:
-        df_temas = pd.DataFrame(columns=['idProposicao', 'id_oficial', 'ementa'])
+        df_temas = pd.DataFrame(columns=['idProposicao_link', 'id_oficial', 'ementa'])
 
     return df_principal, frequencia_partido, df_autores, df_temas
 
@@ -113,6 +126,16 @@ fig_p1.update_layout(yaxis={'categoryorder':'total ascending'}, height=400 + (n_
 st.plotly_chart(fig_p1, use_container_width=True)
 st.divider()
 
+# --- SEÇÃO P4 (ESCOLARIDADE) ---
+st.header("🎓 P4 — Perfil por Escolaridade")
+df_u = df_filtrado.drop_duplicates(subset=['id_oficial'])
+esc_data = df_u['escolaridade'].value_counts().reset_index()
+esc_data.columns = ['Escolaridade', 'Qtd']
+
+fig_p4 = px.bar(esc_data, x='Qtd', y='Escolaridade', orientation='h', color='Qtd', color_continuous_scale='Blues', text_auto=True, template=template_grafico)
+fig_p4.update_layout(yaxis={'categoryorder':'total ascending'})
+st.plotly_chart(fig_p4, use_container_width=True)
+
 # --- SEÇÃO P11 (RANKING DE PARTIDOS) ---
 st.header("📊 P11 — Ranking de Partidos")
 
@@ -142,18 +165,80 @@ with tab_c:
 with tab_d:
     if not df_partidos.empty:
         partido_n = st.selectbox("Selecione o Partido para a Nuvem de Palavras:", df_partidos['sgPartido'].unique())
-        ids_dep = df_link_partido[df_link_partido['sgPartido'] == partido_n]['id_oficial']
-        ementas_partido = df_temas[df_temas['id_oficial'].isin(ids_dep)]['ementa'].dropna()
-        texto = " ".join(ementas_partido)
         
-        if len(texto) > 10:
-            wc = WordCloud(width=800, height=400, background_color='white', colormap='tab10').generate(texto)
-            fig_d, ax = plt.subplots()
-            ax.imshow(wc, interpolation='bilinear')
-            ax.axis('off')
-            st.pyplot(fig_d)
+        # 1. Isolar os IDs dos deputados do partido selecionado e garantir que são strings limpas
+        df_link_partido = df_filtrado[['id_oficial', 'sgPartido']].drop_duplicates()
+        ids_dep = df_link_partido[df_link_partido['sgPartido'] == partido_n]['id_oficial'].astype(str).str.strip().unique()
+        
+        # 2. Garantir que o ID do deputado na tabela de temas também é string limpa para o cruzamento funcionar
+        df_temas_copia = df_temas.copy()
+        df_temas_copia['id_oficial'] = df_temas_copia['id_oficial'].astype(str).str.strip()
+        
+        # 3. Filtrar as ementas pertencentes a estes IDs
+        ementas_partido = df_temas_copia[df_temas_copia['id_oficial'].isin(ids_dep)]['ementa'].dropna()
+        
+        # --- PRINTS DE DIAGNÓSTICO NO TERMINAL ---
+        print(f"\n--- DIAGNÓSTICO STREAMLIT ({partido_n}) ---")
+        print(f"IDs de deputados do partido: {len(ids_dep)}")
+        print(f"Total de linhas em df_temas: {len(df_temas_copia)}")
+        print(f"Ementas encontradas após o filtro do partido: {len(ementas_partido)}")
+        # ----------------------------------------
+
+        # 4. Juntar tudo, forçar minúsculo e limpar espaços/quebras de linha repetidas
+        texto = " ".join(ementas_partido.astype(str)).lower()
+        texto = " ".join(texto.split()) # Remove quebras de linha (\n) e espaços duplos
+        
+        # 5. Limpeza cirúrgica de termos curtinhos direto na string
+        termos_para_remover = [' pl ', ' sr ', ' sra ', ' à ', ' nº ', ' art ', 'dá', 'sem']
+        for termo in termos_para_remover:
+            texto = texto.replace(termo, ' ')
+        
+        # 6. Super lista de Stopwords importada do teste.py
+        ruido_legislativo = {
+            'da', 'n', 'dá', 'do', 'que', 'em', 'para', 'um', 'uma', 'os', 'as', 'ao', 'aos', 'com', 'por', 'pela', 'pelo', 'dos', 'das', 'pelos', 'pelas', 'nos', 'nas', 'sob', 'sobre', 'como', 'na', 'no', 'ou', 'se', 'o', 'a', 'e', 'de', 'através', 'seu', 'sua', 'deste', 'desta', 'à', 'às', 'aquele', 'aquela', 'lei', 'altera', 'dispõe', 'institui', 'cria', 'nº', 'art', 
+            'parágrafo', 'inciso', 'projeto', 'requerimento', 'requer', 'parecer', 'pauta', 'comissão','retirada', 'matéria', 'moção', 'louvor', 'prestados', 'regozijo', 'nominal','realização', 'excelentes',
+            'substitutivo', 'ric', 'exarado', 'adiamento', 'outras', 'pdl', 'termo', 'termos', 'dep',
+            'uor',
+            'público', 'pública', 'públicos', 'públicas', 'fim', 'fins', 'acerca', 'objeto', 'âmbito',
+            'pl', 'sr', 'srª', 'sra', 'srs', 'voto', 'votos', 'convida', 
+            'determina', 'manifesta', 'manifestação', 'encaminha', 'reitera', 'indica', 'indicação', 
+            'proíbe', 'torna', 'obriga', 'concede', 'autoriza', 'autorização', 'instituído', 'criado', 
+            'alterado', 'destinado', 'fixa', 'senhor', 'senhora', 'silva', 'santos', 'oliveira', 
+            'souza', 'melo', 'outros', 'bancada', 'partido', 'liderança', 'líder', 'bloco', 'membro', 
+            'membros', 'visto', 'ter', 'haver', 'fim', 'meio', 'forma', 'efeito', 'caso', 'prazo', 
+            'dia', 'dias', 'ano', 'anos', 'data', 'janeiro', 'fevereiro', 'março', 'abril', 'maio', 
+            'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro', 'brasil', 
+            'republic', 'república', 'ccjc', 'cft', 'ccj', 'sgt', 'plen', 'avulso', 'pec', 'plp', 
+            'mpv', 'inc', 'rpd', 'prl', 'par'
+        }
+        texto_limpo = texto.strip()
+        
+        # Se após limpar tudo sobrarem palavras, renderiza o gráfico
+        if len(texto_limpo) > 5:
+            try:
+                wc = WordCloud(
+                    width=1400,
+                    height=700,
+                    background_color='white',
+                    stopwords=ruido_legislativo,
+                    colormap='tab10',
+                    min_font_size=10,
+                    max_words=70,
+                    collocations=False,
+                    regexp=r"\b[a-zA-ZáéíóúçãõâêôàÀíÍóÓúÚáÁéÉãÃõÕçÇ]+\b"
+                ).generate(texto_limpo)
+                
+                fig_d, ax = plt.subplots(figsize=(14, 7))
+                ax.imshow(wc, interpolation='bilinear')
+                ax.axis('off')
+                plt.tight_layout(pad=0)
+                
+                st.pyplot(fig_d)
+                plt.close(fig_d) 
+            except ValueError:
+                st.info("As ementas deste partido contêm apenas jargões técnicos que foram totalmente filtrados.")
         else:
-            st.warning("Pouco texto disponível para gerar a nuvem deste partido.")
+            st.warning("Pouco texto disponível para gerar a nuvem deste partido após a filtragem de ruídos.")
 st.divider()
 
 # --- SEÇÃO P13 (TIPOS DE DESPESA) ---
@@ -179,13 +264,3 @@ with col_conteudo_p13:
             st.info(f"Total gasto por {dep_escolhido}: R$ {df_ind['vlrLiquido'].sum():,.2f}")
 
 st.divider()
-
-# --- SEÇÃO P4 (ESCOLARIDADE) ---
-st.header("🎓 P4 — Perfil por Escolaridade")
-df_u = df_filtrado.drop_duplicates(subset=['id_oficial'])
-esc_data = df_u['escolaridade'].value_counts().reset_index()
-esc_data.columns = ['Escolaridade', 'Qtd']
-
-fig_p4 = px.bar(esc_data, x='Qtd', y='Escolaridade', orientation='h', color='Qtd', color_continuous_scale='Blues', text_auto=True, template=template_grafico)
-fig_p4.update_layout(yaxis={'categoryorder':'total ascending'})
-st.plotly_chart(fig_p4, use_container_width=True)
