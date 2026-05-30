@@ -1,9 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import os
-import glob
-import csv
+import sqlite3
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 
@@ -15,78 +13,67 @@ template_grafico = "plotly_white"
 
 @st.cache_data
 def carregar_tudo():
+    # Conecta ao banco de dados SQLite
+    conn = sqlite3.connect('banco.db')
+    cursor = conn.cursor()
+    
     # A. GASTOS + PERFIL (P1, P4, P13)
-    arquivos_gastos = glob.glob(os.path.join('dados', 'Ano-*.csv'))
-    # low_memory=False ajuda com arquivos grandes e tipos de dados mistos
-    df_gastos = pd.concat([pd.read_csv(f, sep=';', encoding='utf-8', low_memory=False) for f in arquivos_gastos], ignore_index=True)
-    
-    # PADRONIZAÇÃO CRÍTICA DE IDs: Transforma ideCadastro em texto limpo (sem .0)
-    df_gastos['id_oficial'] = df_gastos['ideCadastro'].astype(str).str.split('.').str[0].str.strip()
-    
-    df_dep = pd.read_csv(os.path.join('dados', 'deputados_detalhado.csv'), sep=';', encoding='utf-8')
-    # Padroniza o ID extraído da URL do deputado
-    df_dep['id_oficial'] = df_dep['uri'].str.split('/').str[-1].str.strip().astype(str).str.split('.').str[0]
-    
-    df_principal = pd.merge(df_gastos, df_dep[['id_oficial', 'siglaSexo', 'escolaridade']], on='id_oficial', how='left')
-    df_principal['escolaridade'] = df_principal['escolaridade'].fillna('Não Informado')
+    # Usar o LEFT JOIN e a cláusula AS para que o Pandas receba os nomes de colunas que o Frontend já espera
+    query_principal = """
+    SELECT 
+        d.dep_id AS id_oficial,
+        d.dep_nome_eleitoral AS txNomeParlamentar,
+        d.dep_escolaridade AS escolaridade,
+        desp.desp_sigla_partido AS sgPartido,
+        desp.desp_sigla_uf AS sgUF,
+        desp.desp_valor_liquido AS vlrLiquido,
+        desp.desp_desc_subcota AS txtDescricao
+    FROM Despesa desp
+    LEFT JOIN Deputado d ON desp.dep_id = d.dep_id
+    """
+    df_principal = pd.read_sql_query(query_principal, conn)
+    df_principal['id_oficial'] = df_principal['id_oficial'].astype(str).str.split('.').str[0]
     
     # B. FREQUÊNCIA (P11a)
-    arquivos_presenca = glob.glob(os.path.join('dados', 'eventosPresencaDeputados-*.csv'))
-    if arquivos_presenca:
-        df_pres = pd.concat([pd.read_csv(f, sep=';', encoding='utf-8') for f in arquivos_presenca], ignore_index=True)
-        # Padroniza idDeputado
-        df_pres['id_oficial'] = df_pres['idDeputado'].astype(str).str.split('.').str[0].str.strip()
-        total_eventos = df_pres['idEvento'].nunique()
-        presencas_por_deputado = df_pres.groupby('id_oficial').size() / total_eventos * 100
+    query_presenca = """
+    SELECT dep_id AS id_oficial, COUNT(evt_id) as qtd 
+    FROM PresencaDeputado 
+    GROUP BY dep_id
+    """
+    df_pres = pd.read_sql_query(query_presenca, conn)
+    df_pres['id_oficial'] = df_pres['id_oficial'].astype(str).str.split('.').str[0]
+    
+    cursor.execute("SELECT COUNT(evt_id) FROM Evento")
+    total_eventos = cursor.fetchone()[0]
+    
+    if total_eventos and total_eventos > 0:
+        df_pres['perc_frequencia'] = (df_pres['qtd'] / total_eventos) * 100
         mapeamento_partido = df_principal[['id_oficial', 'sgPartido']].drop_duplicates()
-        df_freq_dep = presencas_por_deputado.reset_index(name='perc_frequencia')
-        df_freq_final = pd.merge(df_freq_dep, mapeamento_partido, on='id_oficial')
+        df_freq_final = pd.merge(df_pres, mapeamento_partido, on='id_oficial')
         frequencia_partido = df_freq_final.groupby('sgPartido')['perc_frequencia'].mean()
     else:
         frequencia_partido = pd.Series()
     
     # C. PRODUÇÃO (P11b)
-    arquivos_autores = glob.glob(os.path.join('dados', 'proposicoesAutores-*.csv'))
-    if arquivos_autores:
-        df_autores = pd.concat([pd.read_csv(f, sep=';', encoding='utf-8') for f in arquivos_autores], ignore_index=True)
-        # Remove autores sem ID de deputado (ex: Senadores, Órgãos)
-        df_autores = df_autores[df_autores['idDeputadoAutor'].notna() & (df_autores['idDeputadoAutor'].astype(str).str.strip() != '')]
-        # Padroniza idDeputadoAutor
-        df_autores['id_oficial'] = df_autores['idDeputadoAutor'].astype(str).str.split('.').str[0].str.strip()
-        df_autores['idProposicao_link'] = df_autores['idProposicao'].astype(str).str.split('.').str[0].str.strip()
-    else:
-        df_autores = pd.DataFrame(columns=['id_oficial', 'idProposicao_link'])
+    query_autores = """
+    SELECT 
+        dep_id AS id_oficial, 
+        prop_id AS idProposicao_link 
+    FROM ProposicaoAutor
+    WHERE dep_id IS NOT NULL
+    """
+    df_autores = pd.read_sql_query(query_autores, conn)
+    df_autores['id_oficial'] = df_autores['id_oficial'].astype(str).str.split('.').str[0]
+    df_autores['idProposicao_link'] = df_autores['idProposicao_link'].astype(str).str.split('.').str[0]
     
-    # D. EMENTAS PARA NUVEM (P11d)
-    arquivos_prop = glob.glob(os.path.join('dados', 'proposicoes-*.csv'))
-    lista_prop = []
-    for f in arquivos_prop:
-        try:
-            # engine='python' com on_bad_lines='skip' trata ementas com quebra de linha
-            df_temp = pd.read_csv(f, sep=';', encoding='utf-8', on_bad_lines='skip', engine='python')
-            lista_prop.append(df_temp)
-        except Exception as e:
-            print(f"Erro ao tentar ler o arquivo de proposições {f}: {e}")
-            
-    if lista_prop:
-        df_prop = pd.concat(lista_prop, ignore_index=True)
-        
-        # Busca flexível por colunas de Ementa e ID
-        col_ementa = next((col for col in df_prop.columns if 'ementa' in col.lower()), None)
-        col_id = next((col for col in df_prop.columns if col.lower() in ['id', 'idproposicao', 'id_proposicao']), None)
-        
-        if col_ementa and col_id:
-            df_prop['ementa'] = df_prop[col_ementa].astype(str).str.replace('"', '')
-            # Padroniza ID da proposição
-            df_prop['idProposicao_link'] = df_prop[col_id].astype(str).str.split('.').str[0].str.strip()
-            # Merge robusco usando strings padronizadas
-            df_temas = pd.merge(df_autores[['idProposicao_link', 'id_oficial']], df_prop[['idProposicao_link', 'ementa']], on='idProposicao_link', how='inner')
-        else:
-            df_temas = pd.DataFrame(columns=['idProposicao_link', 'id_oficial', 'ementa'])
-    else:
-        df_temas = pd.DataFrame(columns=['idProposicao_link', 'id_oficial', 'ementa'])
+    # D. EMENTAS PARA NUVEM (P11d) e TEMAS
+    query_prop = "SELECT prop_id AS idProposicao_link, prop_ementa AS ementa FROM Proposicao"
+    df_prop = pd.read_sql_query(query_prop, conn)
+    df_prop['idProposicao_link'] = df_prop['idProposicao_link'].astype(str).str.split('.').str[0]
+    
+    df_temas = pd.merge(df_autores, df_prop, on='idProposicao_link', how='inner')
 
-    # E. CLASSIFICAÇÃO TEMÁTICA (P3) — classifica proposições por eixo temático
+    # E. CLASSIFICAÇÃO TEMÁTICA (P3)
     TEMAS_KEYWORDS = {
         'Saúde':          ['saúde', 'médic', 'hospital', 'sus', 'doença', 'farmac', 'vacin', 'enferm', 'sanitár', 'anvisa', 'medicamento'],
         'Educação':       ['educaç', 'escola', 'ensino', 'universidade', 'professor', 'aluno', 'magistério', 'bolsa', 'enem', 'fundeb', 'creche'],
@@ -111,151 +98,106 @@ def carregar_tudo():
     else:
         df_temas_classificado = pd.DataFrame(columns=['idProposicao_link', 'id_oficial', 'ementa', 'tema'])
 
-    # F. VOTOS POR TEMA (P3) — cruza votos dos deputados com proposições classificadas
-    arquivos_votacoes = glob.glob(os.path.join('dados', 'votacoes-*.csv'))
-    if arquivos_votacoes:
-        df_votacoes_p3 = pd.concat(
-            [pd.read_csv(f, sep=';', encoding='utf-8', on_bad_lines='skip', engine='python') for f in arquivos_votacoes],
-            ignore_index=True
-        )
-    else:
-        df_votacoes_p3 = pd.DataFrame(columns=['id', 'ultimaApresentacaoProposicao_idProposicao'])
+    # F. VOTOS POR TEMA (P3)
+    query_votos_p3 = """
+    SELECT 
+        vd.dep_id AS id_oficial,
+        vd.voto_opcao AS voto,
+        v.prop_id AS idProposicao_link,
+        v.vot_registro AS hora_votacao,
+        v.vot_descricao AS descricao_votacao
+    FROM VotoDeputado vd
+    JOIN Votacao v ON vd.vot_id = v.vot_id
+    WHERE v.prop_id IS NOT NULL
+    """
+    df_votos_detalhado = pd.read_sql_query(query_votos_p3, conn)
+    df_votos_detalhado['id_oficial'] = df_votos_detalhado['id_oficial'].astype(str).str.split('.').str[0]
+    df_votos_detalhado['idProposicao_link'] = df_votos_detalhado['idProposicao_link'].astype(str).str.split('.').str[0]
+    
+    df_votos_temas = pd.merge(df_votos_detalhado, df_temas_classificado[['idProposicao_link', 'tema', 'ementa']], on='idProposicao_link', how='inner')
 
-    arquivos_votos_p3 = glob.glob(os.path.join('dados', 'votacoesVotos-*.csv'))
-    if arquivos_votos_p3:
-        df_votos_p3 = pd.concat(
-            [pd.read_csv(f, sep=';', encoding='utf-8', low_memory=False) for f in arquivos_votos_p3],
-            ignore_index=True
-        )
-    else:
-        df_votos_p3 = pd.DataFrame(columns=['idVotacao', 'deputado_id', 'voto'])
-
-    if not df_votos_p3.empty and not df_temas_classificado.empty:
-        df_votos_p3['id_oficial'] = df_votos_p3['deputado_id'].astype(str).str.split('.').str[0].str.strip()
-        df_votacoes_p3['idProposicao_link'] = df_votacoes_p3['ultimaApresentacaoProposicao_idProposicao'].astype(str).str.split('.').str[0].str.strip()
-        df_votos_detalhado = pd.merge(df_votos_p3, df_votacoes_p3[['id', 'idProposicao_link']], left_on='idVotacao', right_on='id', how='left')
-        df_votos_temas = pd.merge(df_votos_detalhado, df_temas_classificado[['idProposicao_link', 'tema', 'ementa']], on='idProposicao_link', how='inner')
-    else:
-        df_votos_temas = pd.DataFrame(columns=['id_oficial', 'tema', 'voto', 'ementa'])
-
+    conn.close()
     return df_principal, frequencia_partido, df_autores, df_temas, df_temas_classificado, df_votos_temas, TEMAS_KEYWORDS
 
 @st.cache_data
 def carregar_votos_e_calcular_alinhamento(df_principal_completo):
-    # E. VOTOS (P10)
-    arquivos_votos = glob.glob(os.path.join('dados', 'votacoesVotos-*.csv'))
-    vazio = (
-        pd.DataFrame(columns=['sgPartido', 'perc_alinhamento']),
-        pd.DataFrame(),
-        pd.DataFrame(),
-        '',
-        ''
-    )
+    conn = sqlite3.connect('banco.db')
+    
+    vazio = (pd.DataFrame(columns=['sgPartido', 'perc_alinhamento']), pd.DataFrame(), pd.DataFrame(), '', '')
 
-    if not arquivos_votos:
+    # E. VOTOS (P10)
+    query_votos = """
+    SELECT 
+        vot_id AS idVotacao, 
+        dep_id AS id_oficial, 
+        voto_opcao AS voto 
+    FROM VotoDeputado
+    """
+    df_votos = pd.read_sql_query(query_votos, conn)
+    
+    if df_votos.empty:
+        conn.close()
         return vazio
 
-    try:
-        lista_votos = [pd.read_csv(f, sep=';', encoding='utf-8', low_memory=False) for f in arquivos_votos]
-        df_votos = pd.concat(lista_votos, ignore_index=True)
+    df_votos['id_oficial'] = df_votos['id_oficial'].astype(str).str.split('.').str[0]
 
-        # 1. Padronizar IDs para o cruzamento
-        if 'idDeputado' in df_votos.columns:
-            id_col_votos = 'idDeputado'
-        elif 'deputado_id' in df_votos.columns:
-            id_col_votos = 'deputado_id'
-        else:
-            id_col_votos = next((col for col in df_votos.columns if 'deputado' in col.lower() and 'id' in col.lower()), None)
-        if not id_col_votos: return vazio
-        df_votos['id_oficial'] = df_votos[id_col_votos].astype(str).str.split('.').str[0].str.strip()
+    # Mapeamento Deputado -> Partido
+    mapeamento_partido = df_principal_completo[['id_oficial', 'sgPartido']].drop_duplicates()
+    df_votos_partido = pd.merge(df_votos, mapeamento_partido, on='id_oficial', how='inner')
 
-        # 2. Mapeamento Deputado -> Partido
-        mapeamento_partido = df_principal_completo[['id_oficial', 'sgPartido']].drop_duplicates()
-        df_votos_partido = pd.merge(df_votos, mapeamento_partido, on='id_oficial', how='inner')
+    # Filtrar votos válidos (Sim ou Não)
+    df_votos_validos = df_votos_partido[df_votos_partido['voto'].isin(['Sim', 'Não'])].copy()
 
-        # 3. Filtrar votos válidos (Sim ou Não)
-        if 'tipoVoto' in df_votos.columns:
-            voto_col = 'tipoVoto'
-        elif 'voto' in df_votos.columns:
-            voto_col = 'voto'
-        else:
-            voto_col = next((col for col in df_votos.columns if 'voto' in col.lower() or 'decisao' in col.lower()), None)
-        if not voto_col: return vazio
-        df_votos_validos = df_votos_partido[df_votos_partido[voto_col].isin(['Sim', 'Não'])].copy()
+    if df_votos_validos.empty:
+        conn.close()
+        return vazio
 
-        if df_votos_validos.empty: return vazio
+    id_votacao_col = 'idVotacao'
+    voto_col = 'voto'
 
-        # 4. Detectar coluna de ID de votação
-        id_votacao_col = next((col for col in df_votos.columns if 'votacao' in col.lower() and 'id' in col.lower()), 'idVotacao')
+    # Calcular alinhamento geral por partido
+    bancada_voto_majoritario = df_votos_validos.groupby([id_votacao_col, 'sgPartido'])[voto_col].agg(
+        lambda x: x.value_counts().index[0]
+    ).reset_index()
+    bancada_voto_majoritario.rename(columns={voto_col: 'voto_bancada'}, inplace=True)
 
-        # 5. Calcular alinhamento geral por partido
-        bancada_voto_majoritario = df_votos_validos.groupby([id_votacao_col, 'sgPartido'])[voto_col].agg(
-            lambda x: x.value_counts().index[0]
-        ).reset_index()
-        bancada_voto_majoritario.rename(columns={voto_col: 'voto_bancada'}, inplace=True)
+    df_comparacao = pd.merge(df_votos_validos, bancada_voto_majoritario, on=[id_votacao_col, 'sgPartido'])
+    df_comparacao['alinhado'] = (df_comparacao[voto_col] == df_comparacao['voto_bancada']).astype(int)
 
-        df_comparacao = pd.merge(df_votos_validos, bancada_voto_majoritario, on=[id_votacao_col, 'sgPartido'])
-        df_comparacao['alinhado'] = (df_comparacao[voto_col] == df_comparacao['voto_bancada']).astype(int)
+    alinhamento_final = df_comparacao.groupby('sgPartido')['alinhado'].mean() * 100
+    df_alinhamento = alinhamento_final.reset_index(name='perc_alinhamento')
 
-        alinhamento_final = df_comparacao.groupby('sgPartido')['alinhado'].mean() * 100
-        df_alinhamento = alinhamento_final.reset_index(name='perc_alinhamento')
+    # Carregar metadados das votações
+    query_meta = "SELECT vot_id AS id_votacao_str, vot_descricao AS tema_label FROM Votacao"
+    df_meta = pd.read_sql_query(query_meta, conn)
+    df_meta['id_votacao_str'] = df_meta['id_votacao_str'].astype(str)
+    df_meta['tema_label'] = df_meta['tema_label'].fillna(df_meta['id_votacao_str']).astype(str)
 
-        # 6. Carregar metadados das votações (descrição/tema) do votacoes-*.csv
-        arquivos_votacoes_meta = glob.glob(os.path.join('dados', 'votacoes-*.csv'))
-        if arquivos_votacoes_meta:
-            lista_meta = [pd.read_csv(f, sep=';', encoding='utf-8', on_bad_lines='skip', engine='python') for f in arquivos_votacoes_meta]
-            df_meta = pd.concat(lista_meta, ignore_index=True)
-            id_meta_col = next((col for col in df_meta.columns if col.lower() == 'id'), 'id')
-            desc_col = next((col for col in df_meta.columns if 'descricao' in col.lower() or 'descri' in col.lower()), None)
-            prop_col = next((col for col in df_meta.columns if 'proposicao' in col.lower() and 'descri' in col.lower()), None)
-            if desc_col:
-                df_meta['tema_label'] = df_meta[desc_col].fillna('').astype(str).str.strip()
-                if prop_col:
-                    mask_vazio = df_meta['tema_label'] == ''
-                    df_meta.loc[mask_vazio, 'tema_label'] = df_meta.loc[mask_vazio, prop_col].fillna('Sem descrição').astype(str).str.strip()
-            elif prop_col:
-                df_meta['tema_label'] = df_meta[prop_col].fillna('Sem descrição').astype(str).str.strip()
-            else:
-                df_meta['tema_label'] = df_meta[id_meta_col].astype(str)
-            df_meta['id_votacao_str'] = df_meta[id_meta_col].astype(str).str.strip()
-            df_meta = df_meta[['id_votacao_str', 'tema_label']].drop_duplicates(subset='id_votacao_str')
-        else:
-            df_meta = pd.DataFrame(columns=['id_votacao_str', 'tema_label'])
+    # Calcular % Sim e % Não por partido
+    df_votos_validos['id_votacao_str'] = df_votos_validos[id_votacao_col].astype(str).str.strip()
+    contagem = df_votos_validos.groupby(['id_votacao_str', 'sgPartido', voto_col]).size().reset_index(name='qtd')
+    total_por_vot_partido = contagem.groupby(['id_votacao_str', 'sgPartido'])['qtd'].sum().reset_index(name='total')
+    contagem = pd.merge(contagem, total_por_vot_partido, on=['id_votacao_str', 'sgPartido'])
+    contagem['perc'] = contagem['qtd'] / contagem['total'] * 100
+    contagem.rename(columns={voto_col: 'voto'}, inplace=True)
+    contagem = pd.merge(contagem, df_meta, on='id_votacao_str', how='left')
+    contagem['tema_label'] = contagem['tema_label'].fillna(contagem['id_votacao_str'])
 
-        # 7. Calcular % Sim e % Não por partido em cada votação
-        df_votos_validos['id_votacao_str'] = df_votos_validos[id_votacao_col].astype(str).str.strip()
-        contagem = df_votos_validos.groupby(['id_votacao_str', 'sgPartido', voto_col]).size().reset_index(name='qtd')
-        total_por_vot_partido = contagem.groupby(['id_votacao_str', 'sgPartido'])['qtd'].sum().reset_index(name='total')
-        contagem = pd.merge(contagem, total_por_vot_partido, on=['id_votacao_str', 'sgPartido'])
-        contagem['perc'] = contagem['qtd'] / contagem['total'] * 100
-        contagem.rename(columns={voto_col: 'voto'}, inplace=True)
-        contagem = pd.merge(contagem, df_meta, on='id_votacao_str', how='left')
-        contagem['tema_label'] = contagem['tema_label'].fillna(contagem['id_votacao_str'])
+    # Calcular votações mais divididas
+    coesao = df_votos_validos.groupby(['id_votacao_str', 'sgPartido'])[voto_col].apply(
+        lambda x: x.value_counts(normalize=True).iloc[0] * 100
+    ).reset_index(name='coesao')
+    divisao_por_votacao = coesao.groupby('id_votacao_str')['coesao'].mean().reset_index(name='coesao_media')
+    divisao_por_votacao = pd.merge(divisao_por_votacao, df_meta, on='id_votacao_str', how='left')
+    divisao_por_votacao['tema_label'] = divisao_por_votacao['tema_label'].fillna(divisao_por_votacao['id_votacao_str'])
+    divisao_por_votacao.sort_values('coesao_media', inplace=True)
 
-        # 8. Calcular votações mais divididas (menor coesão média entre os partidos)
-        coesao = df_votos_validos.groupby(['id_votacao_str', 'sgPartido'])[voto_col].apply(
-            lambda x: x.value_counts(normalize=True).iloc[0] * 100
-        ).reset_index(name='coesao')
-        divisao_por_votacao = coesao.groupby('id_votacao_str')['coesao'].mean().reset_index(name='coesao_media')
-        divisao_por_votacao = pd.merge(divisao_por_votacao, df_meta, on='id_votacao_str', how='left')
-        divisao_por_votacao['tema_label'] = divisao_por_votacao['tema_label'].fillna(divisao_por_votacao['id_votacao_str'])
-        divisao_por_votacao.sort_values('coesao_media', inplace=True)
+    conn.close()
+    return df_alinhamento, contagem, divisao_por_votacao, id_votacao_col, voto_col
 
-        return df_alinhamento, contagem, divisao_por_votacao, id_votacao_col, voto_col
-
-    except Exception as e:
-        print(f"Erro no cálculo de alinhamento (P10): {e}")
-        return (
-            pd.DataFrame(columns=['sgPartido', 'perc_alinhamento']),
-            pd.DataFrame(),
-            pd.DataFrame(),
-            '',
-            ''
-        )
 
 # --- 2. EXECUÇÃO DO CARREGAMENTO ---
-# O Streamlit mostra um spinner enquanto carrega
-with st.spinner('Carregando dados da 57ª Legislatura (2023-2026)... Pode demorar na primeira vez.'):
+with st.spinner('Consultando os dados da 57ª Legislatura...'):
     df_principal, df_freq, df_autores, df_temas, df_temas_classificado, df_votos_temas, TEMAS_KEYWORDS = carregar_tudo()
     df_alinhamento, df_votos_contagem, df_divisao, _id_vot_col, _voto_col = carregar_votos_e_calcular_alinhamento(df_principal)
 
@@ -276,7 +218,6 @@ if partido_sel:
 if uf_sel:
     df_filtrado = df_filtrado[df_filtrado['sgUF'].isin(uf_sel)]
 
-# Obter IDs e partidos dos deputados que restaram após o filtro (para P11 e P10)
 df_link_partido_filtrado = df_filtrado[['id_oficial', 'sgPartido']].drop_duplicates()
 
 # --- 4. MÉTRICAS GLOBAIS ---
@@ -302,14 +243,14 @@ fig_p1 = px.bar(
     template=template_grafico, hover_data=['sgPartido', 'sgUF']
 )
 fig_p1.update_layout(yaxis={'categoryorder':'total ascending'}, height=400 + (n_top * 10))
-st.plotly_chart(fig_p1, use_container_width=True)
+st.plotly_chart(fig_p1, width='stretch')
 st.divider()
 
 # --- 5b. P2 (AGRUPAMENTO POR EIXO TEMÁTICO) ---
 st.header("🗂️ P2 — Agrupamento por Eixo Temático de Atuação")
 
 if df_temas_classificado.empty:
-    st.warning("⚠️ Nenhuma proposição classificada encontrada. Verifique se os arquivos `proposicoes-*.csv` e `proposicoesAutores-*.csv` estão na pasta `dados/`.")
+    st.warning("⚠️ Nenhuma proposição classificada encontrada.")
 else:
     ids_filtrados = df_filtrado['id_oficial'].unique()
     df_tc_filtrado = df_temas_classificado[df_temas_classificado['id_oficial'].isin(ids_filtrados)]
@@ -346,7 +287,7 @@ else:
             )
             fig_p2a.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False, height=450, bargap=0.3)
             fig_p2a.update_traces(textposition='outside', cliponaxis=False)
-            st.plotly_chart(fig_p2a, use_container_width=True)
+            st.plotly_chart(fig_p2a, width='stretch')
 
         with tab_p2b:
             fig_p2b = px.bar(
@@ -357,7 +298,7 @@ else:
             )
             fig_p2b.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False, height=450)
             fig_p2b.update_traces(textposition='outside', cliponaxis=False)
-            st.plotly_chart(fig_p2b, use_container_width=True)
+            st.plotly_chart(fig_p2b, width='stretch')
 
             st.subheader("Lista de Deputados por Tema Dominante")
             tema_filtro = st.selectbox("Selecione o tema:", sorted(contagem_temas['Tema'].tolist()), key='tema_lista_p2b')
@@ -365,7 +306,7 @@ else:
             nomes_tema = df_filtrado[df_filtrado['id_oficial'].isin(deps_tema)][['txNomeParlamentar', 'sgPartido', 'sgUF']].drop_duplicates().sort_values('txNomeParlamentar').reset_index(drop=True)
             nomes_tema.columns = ['Nome', 'Partido', 'UF']
             st.caption(f"{len(nomes_tema)} deputado(s) com tema dominante: **{tema_filtro}**")
-            st.dataframe(nomes_tema, use_container_width=True, hide_index=True)
+            st.dataframe(nomes_tema, width='stretch', hide_index=True)
 
         with tab_p2c:
             lista_deps_p2 = sorted(df_filtrado['txNomeParlamentar'].dropna().unique())
@@ -386,7 +327,7 @@ else:
                         hole=0.4, template=template_grafico,
                         title=f"Distribuição temática — {dep_p2}"
                     )
-                    st.plotly_chart(fig_ind_p2, use_container_width=True)
+                    st.plotly_chart(fig_ind_p2, width='stretch')
 
         with tab_p2d:
             ruido_nuvem = {
@@ -424,15 +365,92 @@ else:
 
 st.divider()
 
+# --- 5c. P3 (🗳️ COMO O DEPUTADO VOTOU POR TEMA) ---
+st.header("🗳️ P3 — Como o Deputado Votou por Tema")
+
+if df_votos_temas.empty:
+    st.warning("⚠️ Dados insuficientes para P3.")
+else:
+    # @st.fragment transforma essa função numa "bolha" independente.
+    # Cliques aqui dentro não recarregam o resto da página.
+    @st.fragment
+    def renderizar_p3_interativa():
+        col_p3a, col_p3b = st.columns(2)
+        with col_p3a:
+            dep_p3 = st.selectbox("Selecione o Deputado:", sorted(df_filtrado['txNomeParlamentar'].dropna().unique()), key='dep_p3')
+        with col_p3b:
+            tema_p3 = st.selectbox("Selecione o Eixo Temático:", sorted(TEMAS_KEYWORDS.keys()), key='tema_p3')
+
+        id_dep_p3 = None
+        dep_rows = df_filtrado[df_filtrado['txNomeParlamentar'] == dep_p3]
+        if not dep_rows.empty:
+            id_dep_p3 = dep_rows['id_oficial'].iloc[0]
+
+        if id_dep_p3:
+            votos_filtro = df_votos_temas[
+                (df_votos_temas['id_oficial'] == id_dep_p3) &
+                (df_votos_temas['tema'] == tema_p3)
+            ].copy()
+
+            if votos_filtro.empty:
+                st.info(f"Sem registros de votos de **{dep_p3}** em votações do eixo **{tema_p3}** no período disponível.")
+            else:
+                if 'hora_votacao' in votos_filtro.columns:
+                    votos_filtro['hora_votacao'] = pd.to_datetime(votos_filtro['hora_votacao'], errors='coerce')
+                    votos_filtro = votos_filtro.sort_values('hora_votacao', ascending=False)
+
+                tipos_disponiveis = votos_filtro['voto'].unique().tolist()
+                
+                st.markdown("Filtrar visualização (clique para ocultar/mostrar):")
+                cols = st.columns(len(tipos_disponiveis) + 1) 
+                
+                tipos_selecionados = []
+                for i, tipo in enumerate(tipos_disponiveis):
+                    if tipo == 'Sim': label = "🟢 Sim"
+                    elif tipo == 'Não': label = "🔴 Não"
+                    else: label = f"⚪ {tipo}"
+                    
+                    # Adicionar o nome do deputado na "key" para o Streamlit não se confundir ao trocar de parlamentar
+                    if cols[i].checkbox(label, value=True, key=f"chk_{tipo}_{dep_p3}_{tema_p3}"):
+                        tipos_selecionados.append(tipo)
+
+                votos_exibicao = votos_filtro[votos_filtro['voto'].isin(tipos_selecionados)]
+
+                def formatar_data_hora(valor_dt):
+                    if pd.notnull(valor_dt):
+                        return f"🕒 {valor_dt.strftime('%d/%m/%Y às %H:%M')} | "
+                    return ""
+
+                st.caption(f"Exibindo {len(votos_exibicao)} votação(ões) correspondente(s) aos filtros.")
+
+                if votos_exibicao.empty:
+                    st.warning("Nenhum voto corresponde aos tipos selecionados no filtro.")
+                else:
+                    with st.container(height=600):
+                        for _, row in votos_exibicao.iterrows():
+                            voto_atual = row['voto']
+                            data_formatada = formatar_data_hora(row.get('hora_votacao'))
+                            
+                            texto_card = f"{data_formatada} **Votou: {voto_atual}**\n\n**Objeto da Votação:** {row['descricao_votacao']}\n\n**Projeto Original:** {row['ementa']}"
+                            
+                            if voto_atual == 'Sim':
+                                st.success("🟢 " + texto_card)
+                            elif voto_atual == 'Não':
+                                st.error("🔴 " + texto_card)
+                            else:
+                                st.warning("⚪ " + texto_card)
+
+    renderizar_p3_interativa()
+
+st.divider()
+
 # --- 6. P4 (PERFIL POR ESCOLARIDADE + DETALHAMENTO) ---
 st.header("🎓 P4 — Perfil por Escolaridade")
 
-# Pegar apenas 1 linha por deputado (perfil único)
 df_u = df_filtrado.drop_duplicates(subset=['id_oficial'])
 esc_data = df_u['escolaridade'].value_counts().reset_index()
 esc_data.columns = ['Escolaridade', 'Qtd']
 
-# Gráfico Principal P4
 fig_p4 = px.bar(
     esc_data, x='Qtd', y='Escolaridade', 
     orientation='h', color='Qtd', color_continuous_scale='Blues', 
@@ -440,22 +458,16 @@ fig_p4 = px.bar(
     labels={'Qtd': 'Número de Deputados'}
 )
 fig_p4.update_layout(yaxis={'categoryorder':'total ascending'})
-st.plotly_chart(fig_p4, use_container_width=True)
+st.plotly_chart(fig_p4, width='stretch')
 
-# --- DETALHAMENTO DA P4 (Tabela Dinâmica de Deputados) ---
 st.subheader("🔍 Ver Deputados por Nível de Escolaridade")
 escolaridades_disponiveis = sorted(df_u['escolaridade'].dropna().unique())
 
 if escolaridades_disponiveis:
-    # Seletor dinâmico
     nivel_sel = st.selectbox("Selecione um nível de instrução para listar os parlamentares:", escolaridades_disponiveis)
-    
-    # Filtra os deputados únicos com aquela escolaridade
     df_nivel_sel = df_u[df_u['escolaridade'] == nivel_sel][['txNomeParlamentar', 'sgPartido', 'sgUF']].sort_values(by='txNomeParlamentar')
-    
-    # Mostra a tabela
     st.markdown(f"**Parlamentares com '{nivel_sel}' ({len(df_nivel_sel)} encontrados):**")
-    st.dataframe(df_nivel_sel, use_container_width=True, hide_index=True)
+    st.dataframe(df_nivel_sel, width='stretch', hide_index=True)
 else:
     st.info("Nenhum dado de escolaridade disponível para os filtros atuais.")
 
@@ -468,7 +480,7 @@ partidos_no_filtro = df_filtrado['sgPartido'].unique()
 df_alinhamento_filtrado = df_alinhamento[df_alinhamento['sgPartido'].isin(partidos_no_filtro)].copy()
 
 if df_alinhamento_filtrado.empty:
-    st.warning("⚠️ Dados de votações (`votacoesVotos-*.csv`) não encontrados na pasta `dados`, insuficientes para os partidos selecionados ou não contêm votos 'Sim'/'Não'. Impossível calcular o alinhamento interno (P10) no momento.")
+    st.warning("⚠️ Dados de votações insuficientes para os partidos selecionados ou não contêm votos 'Sim'/'Não'. Impossível calcular o alinhamento interno (P10) no momento.")
 else:
     tab_p10_geral, tab_p10_busca, tab_p10_divididas = st.tabs([
         "📊 Alinhamento Geral",
@@ -476,7 +488,6 @@ else:
         "⚡ Mais Divididas"
     ])
 
-    # ── Aba 1: Alinhamento Geral (original) ──────────────────────────────────
     with tab_p10_geral:
         st.markdown("Porcentagem média de vezes que os deputados de cada partido votaram junto com a maioria da sua própria bancada (em votações Sim/Não).")
         df_alinhamento_filtrado.sort_values(by='perc_alinhamento', ascending=False, inplace=True)
@@ -489,22 +500,16 @@ else:
             text_auto='.1f'
         )
         fig_p10.update_layout(xaxis={'categoryorder': 'total descending'})
-        st.plotly_chart(fig_p10, use_container_width=True)
+        st.plotly_chart(fig_p10, width='stretch')
 
-    # ── Aba 2: Busca por Votação ──────────────────────────────────────────────
     with tab_p10_busca:
         st.markdown("Busque pelo tema ou descrição de uma votação e veja como cada partido votou.")
 
         if df_votos_contagem.empty:
             st.info("Dados de votações não disponíveis para a busca.")
         else:
-            # Campo de busca
             busca_tema = st.text_input("🔎 Buscar votação por tema/descrição:", placeholder="Ex: reforma, imposto, educação...")
-
-            # Filtrar votações disponíveis para os partidos no filtro global
             df_contagem_filtrada = df_votos_contagem[df_votos_contagem['sgPartido'].isin(partidos_no_filtro)].copy()
-
-            # Obter lista única de votações com seus temas
             opcoes_votacao = df_contagem_filtrada[['id_votacao_str', 'tema_label']].drop_duplicates(subset='id_votacao_str')
 
             if busca_tema:
@@ -514,7 +519,6 @@ else:
             if opcoes_votacao.empty:
                 st.warning("Nenhuma votação encontrada para esse termo.")
             else:
-                # Trunca o label para caber no selectbox
                 opcoes_votacao = opcoes_votacao.copy()
                 opcoes_votacao['label_curto'] = opcoes_votacao['tema_label'].str[:120]
                 mapa_label_id = dict(zip(opcoes_votacao['label_curto'], opcoes_votacao['id_votacao_str']))
@@ -524,8 +528,6 @@ else:
                     options=list(mapa_label_id.keys())
                 )
                 votacao_escolhida_id = mapa_label_id[votacao_escolhida_label]
-
-                # Filtra dados da votação selecionada
                 df_vot_sel = df_contagem_filtrada[df_contagem_filtrada['id_votacao_str'] == votacao_escolhida_id].copy()
 
                 if not df_vot_sel.empty:
@@ -538,22 +540,16 @@ else:
                         template=template_grafico,
                         text_auto='.0f'
                     )
-                    fig_busca.update_layout(
-                        yaxis_title='% de Votos',
-                        legend_title='Voto',
-                        xaxis={'categoryorder': 'total descending'}
-                    )
-                    st.plotly_chart(fig_busca, use_container_width=True)
+                    fig_busca.update_layout(yaxis_title='% de Votos', legend_title='Voto', xaxis={'categoryorder': 'total descending'})
+                    st.plotly_chart(fig_busca, width='stretch')
 
-                    # Tabela resumo: voto majoritário por partido
                     resumo = df_vot_sel.loc[df_vot_sel.groupby('sgPartido')['perc'].idxmax()][['sgPartido', 'voto', 'perc']].copy()
                     resumo.columns = ['Partido', 'Voto Majoritário', '% Maioria']
                     resumo['% Maioria'] = resumo['% Maioria'].round(1)
                     resumo.sort_values('Partido', inplace=True)
                     st.markdown("**Voto majoritário por partido nessa votação:**")
-                    st.dataframe(resumo, use_container_width=True, hide_index=True)
+                    st.dataframe(resumo, width='stretch', hide_index=True)
 
-    # ── Aba 3: Votações Mais Divididas ────────────────────────────────────────
     with tab_p10_divididas:
         st.markdown("Votações onde os partidos tiveram **menor coesão interna** — mais deputados do mesmo partido votando de formas diferentes.")
 
@@ -564,14 +560,12 @@ else:
             with col_n:
                 n_divididas = st.slider("Quantas votações exibir?", 5, 30, 10)
 
-            # Filtra só votações que têm dados dos partidos no filtro
             ids_com_dados = df_votos_contagem[df_votos_contagem['sgPartido'].isin(partidos_no_filtro)]['id_votacao_str'].unique()
             df_div_filtrada = df_divisao[df_divisao['id_votacao_str'].isin(ids_com_dados)].head(n_divididas).copy()
 
             if df_div_filtrada.empty:
                 st.warning("Nenhuma votação encontrada para os partidos selecionados.")
             else:
-                # Label curto para o eixo
                 df_div_filtrada['label_curto'] = df_div_filtrada['tema_label'].str[:60] + '...'
 
                 fig_div = px.bar(
@@ -583,14 +577,9 @@ else:
                     template=template_grafico,
                     text_auto='.1f'
                 )
-                fig_div.update_layout(
-                    yaxis={'categoryorder': 'total ascending'},
-                    height=150 + (n_divididas * 35),
-                    coloraxis_colorbar_title='Coesão (%)'
-                )
-                st.plotly_chart(fig_div, use_container_width=True)
+                fig_div.update_layout(yaxis={'categoryorder': 'total ascending'}, height=150 + (n_divididas * 35), coloraxis_colorbar_title='Coesão (%)')
+                st.plotly_chart(fig_div, width='stretch')
 
-                # Detalhar uma das votações mais divididas
                 st.markdown("---")
                 st.markdown("**Ver detalhes de uma dessas votações:**")
                 mapa_div = dict(zip(df_div_filtrada['label_curto'], df_div_filtrada['id_votacao_str']))
@@ -612,104 +601,44 @@ else:
                         template=template_grafico,
                         text_auto='.0f'
                     )
-                    fig_det.update_layout(
-                        yaxis_title='% de Votos',
-                        legend_title='Voto',
-                        xaxis={'categoryorder': 'total descending'}
-                    )
-                    st.plotly_chart(fig_det, use_container_width=True)
-
-st.divider()
-
-# --- 7b. P3 (🗳️ COMO O DEPUTADO VOTOU POR TEMA) ---
-st.header("🗳️ P3 — Como o Deputado Votou por Tema")
-
-if df_votos_temas.empty:
-    st.warning("⚠️ Dados insuficientes para P3. Verifique se os arquivos `votacoesVotos-*.csv`, `votacoes-*.csv` e `proposicoes-*.csv` estão na pasta `dados/`.")
-else:
-    col_p3a, col_p3b = st.columns(2)
-    with col_p3a:
-        dep_p3 = st.selectbox("Selecione o Deputado:", sorted(df_filtrado['txNomeParlamentar'].dropna().unique()), key='dep_p3')
-    with col_p3b:
-        tema_p3 = st.selectbox("Selecione o Eixo Temático:", sorted(TEMAS_KEYWORDS.keys()), key='tema_p3')
-
-    id_dep_p3 = None
-    dep_rows = df_filtrado[df_filtrado['txNomeParlamentar'] == dep_p3]
-    if not dep_rows.empty:
-        id_dep_p3 = dep_rows['id_oficial'].iloc[0]
-
-    if id_dep_p3:
-        votos_filtro = df_votos_temas[
-            (df_votos_temas['id_oficial'] == id_dep_p3) &
-            (df_votos_temas['tema'] == tema_p3)
-        ]
-
-        if votos_filtro.empty:
-            st.info(f"Sem registros de votos de **{dep_p3}** em votações do eixo **{tema_p3}** no período disponível.")
-        else:
-            votos_agg = votos_filtro['voto'].value_counts().reset_index()
-            votos_agg.columns = ['Voto', 'Quantidade']
-
-            fig_p3 = px.pie(
-                votos_agg, values='Quantidade', names='Voto',
-                color='Voto',
-                color_discrete_map={'Sim': '#2ecc71', 'Não': '#e74c3c', 'Obstrução': '#f1c40f', 'Abstenção': '#95a5a6'},
-                hole=0.4, template=template_grafico,
-                title=f"Votos de {dep_p3} no eixo {tema_p3}"
-            )
-
-            col_grafico, col_tabela = st.columns([0.4, 0.6])
-            with col_grafico:
-                st.plotly_chart(fig_p3, use_container_width=True)
-            with col_tabela:
-                st.markdown("**Proposições votadas:**")
-                tabela_votos = votos_filtro[['voto', 'ementa']].drop_duplicates().reset_index(drop=True)
-                tabela_votos.columns = ['Voto', 'Ementa']
-                st.dataframe(tabela_votos, use_container_width=True, hide_index=True)
+                    fig_det.update_layout(yaxis_title='% de Votos', legend_title='Voto', xaxis={'categoryorder': 'total descending'})
+                    st.plotly_chart(fig_det, width='stretch')
 
 st.divider()
 
 # --- 8. P11 (BARRA DE ABAS - RANKING DE PARTIDOS) ---
 st.header("📊 P11 — Ranking de Partidos (Atividade e Gastos)")
 
-# Preparação de dados agrupados por partido respeitando o FILTRO GLOBAL de despesas
 df_partidos_P11 = df_filtrado.groupby('sgPartido').agg({'vlrLiquido': 'sum'}).reset_index()
-
-# Adicionar Frequência Média (calculada globalmente e mapeada)
 df_partidos_P11['perc_frequencia'] = df_partidos_P11['sgPartido'].map(df_freq).fillna(0)
 
-# Adicionar Produção (contar proposições cruzando autores com partidos FILTRADOS)
 df_prod_partido = pd.merge(df_autores, df_link_partido_filtrado, on='id_oficial', how='inner')
 contagem_prod_partido = df_prod_partido.groupby('sgPartido').size()
 df_partidos_P11['qtd_proposicoes'] = df_partidos_P11['sgPartido'].map(contagem_prod_partido).fillna(0)
 
-# Criação das Abas a, b, c, d
 tab_a, tab_b, tab_c, tab_d = st.tabs(["a) Frequência (%)", "b) Proposições", "c) Gastos Totais", "d) Nuvem de Temas"])
 
 with tab_a:
     st.subheader("Média de Presença em Eventos por Partido (%)")
     fig_a = px.bar(df_partidos_P11.sort_values('perc_frequencia', ascending=False), x='sgPartido', y='perc_frequencia', color='perc_frequencia', color_continuous_scale='Viridis', template=template_grafico, labels={'perc_frequencia': 'Frequência Média (%)'})
-    st.plotly_chart(fig_a, use_container_width=True)
+    st.plotly_chart(fig_a, width='stretch')
 
 with tab_b:
     st.subheader("Total de Proposições Legislativas por Partido")
     fig_b = px.bar(df_partidos_P11.sort_values('qtd_proposicoes', ascending=False), x='sgPartido', y='qtd_proposicoes', color='qtd_proposicoes', color_continuous_scale='Greens', template=template_grafico, labels={'qtd_proposicoes': 'Número de Proposições'})
-    st.plotly_chart(fig_b, use_container_width=True)
+    st.plotly_chart(fig_b, width='stretch')
 
 with tab_c:
     st.subheader("Gasto Total Acumulado (Cota Parlamentar) por Partido")
     fig_c = px.bar(df_partidos_P11.sort_values('vlrLiquido', ascending=False), x='sgPartido', y='vlrLiquido', color='vlrLiquido', color_continuous_scale='Reds', template=template_grafico, labels={'vlrLiquido': 'Total Gasto (R$)'})
-    st.plotly_chart(fig_c, use_container_width=True)
+    st.plotly_chart(fig_c, width='stretch')
 
 with tab_d:
     st.subheader("Nuvem de Temas mais Tratados pelo Partido")
-    # Usa apenas os partidos que restaram no filtro global para o seletor da nuvem
     partidos_nuvem = sorted(df_partidos_P11['sgPartido'].unique())
     
     if partidos_nuvem:
         partido_n = st.selectbox("Selecione o Partido para gerar a Nuvem de Palavras:", partidos_nuvem, key='sb_nuvem')
-        
-        # Filtro robusto de ementas (garantindo strings limpas)
         ids_dep_partido = df_link_partido_filtrado[df_link_partido_filtrado['sgPartido'] == partido_n]['id_oficial'].astype(str).str.strip().unique()
         df_temas_clean = df_temas.copy()
         df_temas_clean['id_oficial'] = df_temas_clean['id_oficial'].astype(str).str.strip()
@@ -718,7 +647,6 @@ with tab_d:
         
         if len(texto) > 10:
             try:
-                # Stopwords legislativas básicas para limpar a nuvem
                 stop_leg = {'lei', 'altera', 'dispõe', 'institui', 'cria', 'nº', 'art', 'projeto', 'requerimento', 'comissão', 'da', 'do', 'que', 'em', 'para', 'com', 'o', 'a', 'os', 'as'}
                 wc = WordCloud(width=800, height=400, background_color='white', stopwords=stop_leg, colormap='tab10').generate(texto.lower())
                 fig_d, ax = plt.subplots(figsize=(10, 5))
@@ -734,7 +662,7 @@ with tab_d:
         st.info("Nenhum partido disponível para gerar nuvem com os filtros atuais.")
 st.divider()
 
-# --- 9. P13 (TIPOS DE DESPESA - VISÃO GERAL E INDIVIDUAL) ---
+# --- 9. P13 (TIPOS DE DESPESA) ---
 st.header("📑 P13 — Tipos de Despesa (Cota Parlamentar)")
 col_vazia_l, col_conteudo_p13, col_vazia_r = st.columns([0.15, 0.7, 0.15])
 
@@ -745,13 +673,12 @@ with col_conteudo_p13:
         cat_data = df_filtrado.groupby('txtDescricao')['vlrLiquido'].sum().reset_index()
         if not cat_data.empty:
             fig_global = px.pie(cat_data, values='vlrLiquido', names='txtDescricao', hole=0.4, template=template_grafico, title="Distribuição de Gastos por Categoria")
-            fig_global.update_layout(showlegend=True) # Ativei a legenda aqui
-            st.plotly_chart(fig_global, use_container_width=True)
+            fig_global.update_layout(showlegend=True) 
+            st.plotly_chart(fig_global, width='stretch')
         else:
             st.info("Nenhum dado de despesa encontrado para os filtros atuais.")
 
     with tab_individual:
-        # Seletor independente para P13 Individual respeitando o FILTRO GLOBAL
         lista_nomes_P13 = sorted(df_filtrado['txNomeParlamentar'].dropna().unique())
         if len(lista_nomes_P13) > 0:
             dep_escolhido = st.selectbox("Selecione um deputado para análise individual de gastos:", lista_nomes_P13, key='sb_dep_p13')
@@ -761,7 +688,7 @@ with col_conteudo_p13:
             if not cat_ind.empty:
                 st.info(f"Total gasto acumulado (2023-2026) por {dep_escolhido}: **R$ {df_ind['vlrLiquido'].sum():,.2f}**")
                 fig_ind = px.pie(cat_ind, values='vlrLiquido', names='txtDescricao', hole=0.4, color_discrete_sequence=px.colors.qualitative.Safe, title=f"Distribuição de Gastos de {dep_escolhido}")
-                st.plotly_chart(fig_ind, use_container_width=True)
+                st.plotly_chart(fig_ind, width='stretch')
             else:
                  st.warning(f"O deputado {dep_escolhido} está no filtro, mas não possui registros de despesas.")
         else:
