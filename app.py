@@ -11,6 +11,24 @@ template_grafico = "plotly_white"
 
 # --- 1. FUNÇÕES DE CARREGAMENTO DE DADOS (COM CACHE) ---
 
+def obter_frequencia_palavras_chave(serie_palavras):
+    # 1. Transforma em minúsculo e remove o ponto final
+    pc = serie_palavras.astype(str).str.lower().str.replace('.', '', regex=False)
+
+    # 2. Separa por vírgula e explode as listas em várias linhas
+    pc = pc.str.split(',').explode()
+    
+    # 3. Remove espaços em branco
+    pc = pc.str.strip()
+    
+    # 4. Desconsidera strings vazias ou "nan"
+    pc = pc[(pc != '') & (pc != 'nan')]
+    
+    # 5. Conta a frequência
+    freq = pc.value_counts()
+    
+    return freq
+
 @st.cache_data
 def carregar_tudo():
     # Conecta ao banco de dados SQLite
@@ -67,10 +85,10 @@ def carregar_tudo():
     df_autores['idProposicao_link'] = df_autores['idProposicao_link'].astype(str).str.split('.').str[0]
     
     # D. EMENTAS PARA NUVEM (P11d) e TEMAS
-    query_prop = "SELECT prop_id AS idProposicao_link, prop_ementa AS ementa FROM Proposicao"
+    query_prop = "SELECT prop_id AS idProposicao_link, prop_ementa AS ementa, prop_palavras_chave AS palavras_chave FROM Proposicao"
     df_prop = pd.read_sql_query(query_prop, conn)
     df_prop['idProposicao_link'] = df_prop['idProposicao_link'].astype(str).str.split('.').str[0]
-    
+
     df_temas = pd.merge(df_autores, df_prop, on='idProposicao_link', how='inner')
 
     # E. CLASSIFICAÇÃO TEMÁTICA (P3)
@@ -330,38 +348,36 @@ else:
                     st.plotly_chart(fig_ind_p2, width='stretch')
 
         with tab_p2d:
-            ruido_nuvem = {
-                'da', 'do', 'de', 'que', 'em', 'para', 'um', 'uma', 'os', 'as', 'ao', 'aos', 'com', 'por',
-                'pela', 'pelo', 'dos', 'das', 'pelos', 'pelas', 'nos', 'nas', 'sob', 'sobre', 'como',
-                'na', 'no', 'ou', 'se', 'o', 'a', 'e', 'através', 'seu', 'sua', 'deste', 'desta',
-                'à', 'às', 'lei', 'altera', 'dispõe', 'institui', 'cria', 'art', 'projeto', 'requerimento',
-                'parecer', 'pauta', 'comissão', 'retirada', 'matéria', 'público', 'pública', 'pl', 'sr',
-                'voto', 'votos', 'determina', 'manifesta', 'proíbe', 'torna', 'obriga', 'concede', 'autoriza',
-                'brasil', 'república', 'nacional', 'federal', 'estadual', 'municipal', 'deputado', 'câmara',
-                'pec', 'plp', 'mpv', 'nº', 'n', 'dá', 'sem', 'dia', 'dias', 'ano', 'anos',
-            }
             tema_nuvem = st.selectbox("Selecione o eixo temático:", sorted(TEMAS_KEYWORDS.keys()), key='tema_nuvem_p2d')
-            ementas_tema = df_tc_filtrado[df_tc_filtrado['tema'] == tema_nuvem]['ementa'].dropna()
-            if len(ementas_tema) == 0:
-                st.warning("Nenhuma ementa encontrada para este tema com os filtros atuais.")
+            palavras_tema = df_tc_filtrado[df_tc_filtrado['tema'] == tema_nuvem]['palavras_chave'].dropna()
+            
+            if len(palavras_tema) == 0:
+                st.warning("Nenhuma palavra-chave encontrada para este tema com os filtros atuais.")
             else:
-                texto_tema = " ".join(ementas_tema.astype(str)).lower()
-                try:
-                    wc_tema = WordCloud(
-                        width=1400, height=600, background_color='white',
-                        stopwords=ruido_nuvem, colormap='tab10', min_font_size=10,
-                        max_words=80, collocations=False,
-                        regexp=r"\b[a-zA-ZáéíóúçãõâêôàÀíÍóÓúÚáÁéÉãÃõÕçÇ]+\b"
-                    ).generate(texto_tema)
-                    fig_nuvem_tema, ax_nt = plt.subplots(figsize=(14, 6))
-                    ax_nt.imshow(wc_tema, interpolation='bilinear')
-                    ax_nt.axis('off')
-                    plt.tight_layout(pad=0)
-                    st.pyplot(fig_nuvem_tema)
-                    plt.close(fig_nuvem_tema)
-                    st.caption(f"Nuvem gerada a partir de {len(ementas_tema)} proposições classificadas como **{tema_nuvem}**")
-                except ValueError:
-                    st.info("Texto insuficiente após filtragem para gerar a nuvem.")
+                freq_palavras = obter_frequencia_palavras_chave(palavras_tema)
+                
+                if freq_palavras.empty:
+                    st.info("Texto insuficiente para gerar a nuvem.")
+                else:
+                    col_nuvem, col_tabela = st.columns([0.7, 0.3])
+                    
+                    with col_nuvem:
+                        wc_tema = WordCloud(
+                            width=900, height=500, background_color='white',
+                            colormap='tab10', min_font_size=10, max_words=80
+                        ).generate_from_frequencies(freq_palavras.to_dict())
+                        
+                        fig_nuvem_tema, ax_nt = plt.subplots(figsize=(12, 6))
+                        ax_nt.imshow(wc_tema, interpolation='bilinear')
+                        ax_nt.axis('off')
+                        plt.tight_layout(pad=0)
+                        st.pyplot(fig_nuvem_tema)
+                        plt.close(fig_nuvem_tema)
+                        st.caption(f"Nuvem gerada a partir de proposições classificadas como **{tema_nuvem}**")
+                    
+                    with col_tabela:
+                        df_freq_tema = pd.DataFrame({'Palavra-chave': freq_palavras.index, 'Frequência': freq_palavras.values})
+                        st.dataframe(df_freq_tema, hide_index=True, height=450, use_container_width=True)
 
 st.divider()
 
@@ -640,24 +656,36 @@ with tab_d:
     if partidos_nuvem:
         partido_n = st.selectbox("Selecione o Partido para gerar a Nuvem de Palavras:", partidos_nuvem, key='sb_nuvem')
         ids_dep_partido = df_link_partido_filtrado[df_link_partido_filtrado['sgPartido'] == partido_n]['id_oficial'].astype(str).str.strip().unique()
-        df_temas_clean = df_temas.copy()
-        df_temas_clean['id_oficial'] = df_temas_clean['id_oficial'].astype(str).str.strip()
-        ementas_partido = df_temas_clean[df_temas_clean['id_oficial'].isin(ids_dep_partido)]['ementa'].dropna()
-        texto = " ".join(ementas_partido.astype(str))
         
-        if len(texto) > 10:
-            try:
-                stop_leg = {'lei', 'altera', 'dispõe', 'institui', 'cria', 'nº', 'art', 'projeto', 'requerimento', 'comissão', 'da', 'do', 'que', 'em', 'para', 'com', 'o', 'a', 'os', 'as'}
-                wc = WordCloud(width=800, height=400, background_color='white', stopwords=stop_leg, colormap='tab10').generate(texto.lower())
-                fig_d, ax = plt.subplots(figsize=(10, 5))
-                ax.imshow(wc, interpolation='bilinear')
-                ax.axis('off')
-                st.pyplot(fig_d)
-                plt.close(fig_d)
-            except ValueError:
-                 st.warning("Não foi possível gerar a nuvem para este partido (texto insuficiente após filtragem).")
+        # Filtra as palavras chave dos deputados desse partido
+        palavras_partido = df_temas[df_temas['id_oficial'].isin(ids_dep_partido)]['palavras_chave'].dropna()
+        
+        if len(palavras_partido) > 0:
+            freq_partido = obter_frequencia_palavras_chave(palavras_partido)
+            
+            if not freq_partido.empty:
+                col_nuvem_p, col_tabela_p = st.columns([0.7, 0.3])
+                
+                with col_nuvem_p:
+                    wc = WordCloud(
+                        width=900, height=500, background_color='white', 
+                        colormap='tab10', max_words=80
+                    ).generate_from_frequencies(freq_partido.to_dict())
+                    
+                    fig_d, ax = plt.subplots(figsize=(12, 6))
+                    ax.imshow(wc, interpolation='bilinear')
+                    ax.axis('off')
+                    plt.tight_layout(pad=0)
+                    st.pyplot(fig_d)
+                    plt.close(fig_d)
+                
+                with col_tabela_p:
+                    df_freq_partido = pd.DataFrame({'Palavra-chave': freq_partido.index, 'Frequência': freq_partido.values})
+                    st.dataframe(df_freq_partido, hide_index=True, height=450, use_container_width=True)
+            else:
+                 st.warning("Não foi possível gerar a nuvem para este partido (palavras insuficientes).")
         else:
-            st.warning("Pouco texto disponível nas ementas para gerar a nuvem deste partido.")
+            st.warning("Nenhuma palavra-chave disponível nas proposições deste partido.")
     else:
         st.info("Nenhum partido disponível para gerar nuvem com os filtros atuais.")
 st.divider()
