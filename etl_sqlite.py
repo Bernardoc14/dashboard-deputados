@@ -178,22 +178,50 @@ def criar_banco_de_dados():
     # ---------------------------------------------------------
     print("Carregando tabelas Evento e PresencaDeputado...")
     arquivos_presenca = glob.glob(os.path.join('dados', 'eventosPresencaDeputados-*.csv'))
-    
+    arquivos_eventos  = glob.glob(os.path.join('dados', 'eventos-*.csv'))
+
     if arquivos_presenca:
         df_pres = pd.concat([pd.read_csv(f, sep=';', encoding='utf-8', on_bad_lines='skip', engine='python') for f in arquivos_presenca], ignore_index=True)
-        
+
         df_pres['dep_id'] = df_pres['idDeputado'].astype(str).str.split('.').str[0].str.strip()
         df_pres['evt_id'] = df_pres['idEvento'].astype(str).str.split('.').str[0].str.strip()
 
-        df_evento = pd.DataFrame({'evt_id': df_pres['evt_id'].unique()})
-        df_evento.to_sql('Evento', conn, if_exists='append', index=False)
+        # Monta tabela Evento: começa com os IDs de presença e enriquece com os CSVs de eventos
+        ids_presenca = df_pres['evt_id'].unique()
 
+        if arquivos_eventos:
+            df_ev = pd.concat([pd.read_csv(f, sep=';', encoding='utf-8', on_bad_lines='skip', engine='python') for f in arquivos_eventos], ignore_index=True)
+            df_ev['evt_id'] = df_ev['id'].astype(str).str.split('.').str[0].str.strip()
+            df_ev = df_ev.rename(columns={
+                'dataHoraInicio':   'evt_inicio',
+                'dataHoraFim':      'evt_fim',
+                'situacao':         'evt_situacao',
+                'descricaoTipo':    'evt_tipo',
+                'descricao':        'evt_descricao',
+                'urlDocumentoPauta':'evt_url_pauta',
+            })
+            df_ev['evt_data'] = df_ev['evt_inicio'].astype(str).str[:10]
+            colunas_ev = [c for c in df_ev.columns if c in ['evt_id','evt_data','evt_situacao','evt_tipo','evt_inicio','evt_fim','evt_descricao','evt_url_pauta']]
+            df_ev = df_ev[colunas_ev].drop_duplicates(subset=['evt_id'])
+
+            # Garante que todos os IDs de presença existam na tabela Evento
+            ids_faltando = set(ids_presenca) - set(df_ev['evt_id'].values)
+            if ids_faltando:
+                df_extras = pd.DataFrame({'evt_id': list(ids_faltando)})
+                df_ev = pd.concat([df_ev, df_extras], ignore_index=True)
+
+            df_ev.to_sql('Evento', conn, if_exists='append', index=False)
+        else:
+            # Sem CSVs de eventos, insere só os IDs
+            pd.DataFrame({'evt_id': ids_presenca}).to_sql('Evento', conn, if_exists='append', index=False)
+
+        # Presença
         if 'dataHoraInicio' in df_pres.columns:
             df_pres = df_pres.rename(columns={'dataHoraInicio': 'pres_inicio_evento'})
             df_pres['pres_data_evento'] = df_pres['pres_inicio_evento'].str[:10]
         elif 'data' in df_pres.columns:
             df_pres = df_pres.rename(columns={'data': 'pres_data_evento'})
-            
+
         colunas_pres = [c for c in df_pres.columns if c in ['evt_id', 'dep_id', 'pres_data_evento', 'pres_inicio_evento']]
         df_pres = df_pres[colunas_pres].drop_duplicates(subset=['evt_id', 'dep_id'])
         df_pres.to_sql('PresencaDeputado', conn, if_exists='append', index=False)
