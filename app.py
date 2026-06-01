@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import sqlite3
+import re
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 
@@ -11,22 +12,46 @@ template_grafico = "plotly_white"
 
 # --- 1. FUNÇÕES DE CARREGAMENTO DE DADOS (COM CACHE) ---
 
+STOPWORDS_LEGISLATIVAS = {
+    # Verbos de ação genéricos
+    'alteração', 'criação', 'instituição', 'estabelecimento', 'regulamentação',
+    'dispõe', 'dispoe', 'denominação', 'concessão', 'autorização', 'proibição',
+    'inclusão', 'exclusão', 'revogação', 'acréscimo', 'adequação', 'fixação',
+    'determinação', 'definição', 'vedação', 'obrigatoriedade', 'implementação',
+    # Termos processuais/legislativos genéricos
+    'lei federal', 'lei complementar', 'projeto de lei', 'medida provisória',
+    'decreto', 'norma', 'dispositivo', 'artigo', 'parágrafo', 'inciso',
+    'regulamento', 'normatização', 'legislação', 'lei',
+    'código', 'estatuto', 'diretrizes', 'critério', 'critérios', 'prazo',
+    'programa', 'política pública', 'política', 'plano', 'programa (administração)',
+    # Termos de resultado genéricos
+    'incentivo', 'benefício', 'proteção', 'promoção', 'fomento', 'apoio',
+    'redução', 'aumento', 'ampliação', 'suspensão', 'utilização', 'combate',
+    'fiscalização', 'controle', 'gestão', 'financiamento',
+}
+
 def obter_frequencia_palavras_chave(serie_palavras):
     # 1. Transforma em minúsculo e remove o ponto final
     pc = serie_palavras.astype(str).str.lower().str.replace('.', '', regex=False)
 
     # 2. Separa por vírgula e explode as listas em várias linhas
     pc = pc.str.split(',').explode()
-    
+
     # 3. Remove espaços em branco
     pc = pc.str.strip()
-    
+
     # 4. Desconsidera strings vazias ou "nan"
     pc = pc[(pc != '') & (pc != 'nan')]
-    
-    # 5. Conta a frequência
+
+    # 5. Remove stopwords legislativas genéricas
+    pc = pc[~pc.isin(STOPWORDS_LEGISLATIVAS)]
+
+    # 6. Remove palavras muito curtas (1-2 caracteres)
+    pc = pc[pc.str.len() > 2]
+
+    # 7. Conta a frequência
     freq = pc.value_counts()
-    
+
     return freq
 
 @st.cache_data
@@ -53,24 +78,19 @@ def carregar_tudo():
     df_principal['id_oficial'] = df_principal['id_oficial'].astype(str).str.split('.').str[0]
     
     # B. FREQUÊNCIA (P11a)
+    # Conta presenças apenas em Sessões Deliberativas (obrigatórias para todos os deputados)
     query_presenca = """
-    SELECT dep_id AS id_oficial, COUNT(evt_id) as qtd 
-    FROM PresencaDeputado 
-    GROUP BY dep_id
+    SELECT p.dep_id AS id_oficial, COUNT(p.evt_id) as qtd
+    FROM PresencaDeputado p
+    JOIN Evento e ON p.evt_id = e.evt_id
+    WHERE e.evt_tipo = 'Sessão Deliberativa'
+    GROUP BY p.dep_id
     """
     df_pres = pd.read_sql_query(query_presenca, conn)
     df_pres['id_oficial'] = df_pres['id_oficial'].astype(str).str.split('.').str[0]
-    
-    cursor.execute("SELECT COUNT(evt_id) FROM Evento")
-    total_eventos = cursor.fetchone()[0]
-    
-    if total_eventos and total_eventos > 0:
-        df_pres['perc_frequencia'] = (df_pres['qtd'] / total_eventos) * 100
-        mapeamento_partido = df_principal[['id_oficial', 'sgPartido']].drop_duplicates()
-        df_freq_final = pd.merge(df_pres, mapeamento_partido, on='id_oficial')
-        frequencia_partido = df_freq_final.groupby('sgPartido')['perc_frequencia'].mean()
-    else:
-        frequencia_partido = pd.Series()
+    mapeamento_partido = df_principal[['id_oficial', 'sgPartido']].drop_duplicates()
+    df_freq_final = pd.merge(df_pres, mapeamento_partido, on='id_oficial')
+    frequencia_partido = df_freq_final.groupby('sgPartido')['qtd'].mean()
     
     # C. PRODUÇÃO (P11b)
     query_autores = """
@@ -443,18 +463,61 @@ else:
                     st.warning("Nenhum voto corresponde aos tipos selecionados no filtro.")
                 else:
                     with st.container(height=600):
-                        for _, row in votos_exibicao.iterrows():
+                        for idx, row in votos_exibicao.iterrows():
                             voto_atual = row['voto']
                             data_formatada = formatar_data_hora(row.get('hora_votacao'))
-                            
-                            texto_card = f"{data_formatada} **Votou: {voto_atual}**\n\n**Objeto da Votação:** {row['descricao_votacao']}\n\n**Projeto Original:** {row['ementa']}"
-                            
-                            if voto_atual == 'Sim':
-                                st.success("🟢 " + texto_card)
-                            elif voto_atual == 'Não':
-                                st.error("🔴 " + texto_card)
+
+                            # --- Formatar resultado da votação ---
+                            descricao_raw = str(row.get('descricao_votacao', '') or '')
+                            # Extrair placar (ex: "Sim: 274; Não: 101; Total: 375")
+                            placar_match = re.search(r'(Sim:\s*\d+[\s;,]*Não:\s*\d+[\s;,]*Total:\s*\d+)', descricao_raw, re.IGNORECASE)
+                            placar = placar_match.group(1) if placar_match else None
+                            # Limpar a descrição: remover placar embutido, truncar se longa
+                            desc_limpa = re.sub(r'\s*[\.\s]*(Sim:\s*\d+[\s;,]*Não:\s*\d+[\s;,]*Total:\s*\d+)', '', descricao_raw).strip()
+                            if len(desc_limpa) > 180:
+                                desc_limpa = desc_limpa[:180].rsplit(' ', 1)[0] + '…'
+
+                            # --- Formatar ementa do projeto ---
+                            ementa_raw = str(row.get('ementa', '') or '')
+                            # Extrair número do projeto (ex: PL 1234/2023, PEC 45/2024)
+                            proj_match = re.search(r'\b(PL|PEC|PLN|MPV|PDC|PLP|PRC|REQ|MSC|PDL)\s*[nº°.]?\s*(\d+[\./]\d+)', ementa_raw, re.IGNORECASE)
+                            num_projeto = proj_match.group(0).upper() if proj_match else None
+                            # Extrair trecho mais informativo: pegar o conteúdo entre aspas se houver
+                            trecho_aspas = re.search(r'["\u201c\u201d](.{20,300}?)["\u201c\u201d]', ementa_raw)
+                            if trecho_aspas:
+                                ementa_resumida = trecho_aspas.group(1).strip()
                             else:
-                                st.warning("⚪ " + texto_card)
+                                # Remover prefixos burocráticos comuns
+                                ementa_limpa = re.sub(
+                                    r'^(Apresentação d[oa]|Parecer proferido em Plenário pel[oa] Relator[a]?,?\s*[^,]+,\s*(pela|pelo)\s*[^,]+,\s*que conclui pela\s*)',
+                                    '', ementa_raw, flags=re.IGNORECASE
+                                ).strip()
+                                ementa_resumida = ementa_limpa[:220].rsplit(' ', 1)[0] + '…' if len(ementa_limpa) > 220 else ementa_limpa
+
+                            # --- Montar card ---
+                            if voto_atual == 'Sim':
+                                icone, cor_borda = "🟢", "#2ecc71"
+                                fn_card = st.success
+                            elif voto_atual == 'Não':
+                                icone, cor_borda = "🔴", "#e74c3c"
+                                fn_card = st.error
+                            else:
+                                icone, cor_borda = "⚪", "#f39c12"
+                                fn_card = st.warning
+
+                            linhas = [f"{icone} {data_formatada}**Votou: {voto_atual}**"]
+                            if num_projeto:
+                                linhas.append(f"🗂️ **Projeto:** `{num_projeto}`")
+                            if placar:
+                                linhas.append(f"📊 **Resultado:** {placar}")
+                            linhas.append(f"**Objeto:** {desc_limpa}")
+
+                            fn_card("\n\n".join(linhas))
+
+                            if ementa_resumida:
+                                with st.expander("📄 Ver ementa do projeto"):
+                                    st.write(ementa_resumida)
+                            st.markdown("")
 
     renderizar_p3_interativa()
 
@@ -632,11 +695,11 @@ df_prod_partido = pd.merge(df_autores, df_link_partido_filtrado, on='id_oficial'
 contagem_prod_partido = df_prod_partido.groupby('sgPartido').size()
 df_partidos_P11['qtd_proposicoes'] = df_partidos_P11['sgPartido'].map(contagem_prod_partido).fillna(0)
 
-tab_a, tab_b, tab_c, tab_d = st.tabs(["a) Frequência (%)", "b) Proposições", "c) Gastos Totais", "d) Nuvem de Temas"])
+tab_a, tab_b, tab_c, tab_d = st.tabs(["a) Frequência (Sessões)", "b) Proposições", "c) Gastos Totais", "d) Nuvem de Temas"])
 
 with tab_a:
-    st.subheader("Média de Presença em Eventos por Partido (%)")
-    fig_a = px.bar(df_partidos_P11.sort_values('perc_frequencia', ascending=False), x='sgPartido', y='perc_frequencia', color='perc_frequencia', color_continuous_scale='Viridis', template=template_grafico, labels={'perc_frequencia': 'Frequência Média (%)'})
+    st.subheader("Média de Sessões Deliberativas Comparecidas por Deputado (por Partido)")
+    fig_a = px.bar(df_partidos_P11.sort_values('perc_frequencia', ascending=False), x='sgPartido', y='perc_frequencia', color='perc_frequencia', color_continuous_scale='Viridis', template=template_grafico, labels={'perc_frequencia': 'Média de Sessões Comparecidas'})
     st.plotly_chart(fig_a, width='stretch')
 
 with tab_b:
