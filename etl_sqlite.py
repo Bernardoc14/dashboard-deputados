@@ -226,6 +226,18 @@ def criar_banco_de_dados():
         df_pres = df_pres[colunas_pres].drop_duplicates(subset=['evt_id', 'dep_id'])
         df_pres.to_sql('PresencaDeputado', conn, if_exists='append', index=False)
 
+
+    print("Criando índices para otimização...")
+    cursor.executescript("""
+    CREATE INDEX IF NOT EXISTS idx_votacao_prop   ON Votacao(prop_id);
+    CREATE INDEX IF NOT EXISTS idx_propautor_dep  ON ProposicaoAutor(dep_id);
+    CREATE INDEX IF NOT EXISTS idx_propautor_prop ON ProposicaoAutor(prop_id);
+    CREATE INDEX IF NOT EXISTS idx_despesa_dep    ON Despesa(dep_id);
+    CREATE INDEX IF NOT EXISTS idx_votodep_dep    ON VotoDeputado(dep_id);
+    CREATE INDEX IF NOT EXISTS idx_votodep_vot    ON VotoDeputado(vot_id);
+    CREATE INDEX IF NOT EXISTS idx_presenca_dep   ON PresencaDeputado(dep_id);
+    CREATE INDEX IF NOT EXISTS idx_evento_tipo    ON Evento(evt_tipo);
+    """)
     conn.close()
     print("Base de dados gerada.")
 
