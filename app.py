@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import sqlite3
 import re
+import time
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 import unicodedata
@@ -55,12 +56,33 @@ def obter_frequencia_palavras_chave(serie_palavras):
 
     return freq
 
+def limpar_id(serie):
+    """
+    Converte uma coluna de ID que pode vir como float (ex: 123.0, por causa
+    de NULLs no LEFT JOIN) em string limpa "123", sem o ".0".
+
+    Antes: serie.astype(str).str.split('.').str[0]
+    Isso é lento porque o pandas faz, célula por célula em Python puro:
+    1) converte pra string, 2) cria uma lista splitando por '.', 3) pega o
+    primeiro item da lista. Três passadas, todas em Python.
+
+    Agora: convertemos para Int64 (inteiro anulável do pandas, suporta NaN)
+    usando pd.to_numeric, que é vetorizado em C, e só then convertemos pra
+    string. NaN/None viram <NA> -> string "<NA>", então tratamos via where.
+    """
+    numerico = pd.to_numeric(serie, errors='coerce').astype('Int64')
+    return numerico.astype(str).where(numerico.notna(), None)
+
+
 @st.cache_data
 def carregar_tudo():
+    _t = {}  # dicionário de medições: nome_etapa -> segundos
+    _t0 = time.time()
+
     # Conecta ao banco de dados SQLite
     conn = sqlite3.connect('banco.db')
     cursor = conn.cursor()
-    
+
     # A. GASTOS + PERFIL (P1, P4, P13)
     query_principal = """
     SELECT 
@@ -74,9 +96,14 @@ def carregar_tudo():
     FROM Despesa desp
     LEFT JOIN Deputado d ON desp.dep_id = d.dep_id
     """
+    _s = time.time()
     df_principal = pd.read_sql_query(query_principal, conn)
-    df_principal['id_oficial'] = df_principal['id_oficial'].astype(str).str.split('.').str[0]
-    
+    _t['A_sql_principal'] = time.time() - _s
+
+    _s = time.time()
+    df_principal['id_oficial'] = limpar_id(df_principal['id_oficial'])
+    _t['A_pandas_limpar_id'] = time.time() - _s
+
     # B. FREQUÊNCIA (P11a)
     # Conta presenças apenas em Sessões Deliberativas
     query_presenca = """
@@ -86,12 +113,17 @@ def carregar_tudo():
     WHERE e.evt_tipo = 'Sessão Deliberativa'
     GROUP BY p.dep_id
     """
+    _s = time.time()
     df_pres = pd.read_sql_query(query_presenca, conn)
-    df_pres['id_oficial'] = df_pres['id_oficial'].astype(str).str.split('.').str[0]
+    _t['B_sql_presenca'] = time.time() - _s
+
+    _s = time.time()
+    df_pres['id_oficial'] = limpar_id(df_pres['id_oficial'])
     mapeamento_partido = df_principal[['id_oficial', 'sgPartido']].drop_duplicates()
     df_freq_final = pd.merge(df_pres, mapeamento_partido, on='id_oficial')
     frequencia_partido = df_freq_final.groupby('sgPartido')['qtd'].mean()
-    
+    _t['B_pandas_merge_groupby'] = time.time() - _s
+
     # C. PRODUÇÃO (P11b)
     query_autores = """
     SELECT 
@@ -100,18 +132,30 @@ def carregar_tudo():
     FROM ProposicaoAutor
     WHERE dep_id IS NOT NULL
     """
+    _s = time.time()
     df_autores = pd.read_sql_query(query_autores, conn)
-    df_autores['id_oficial'] = df_autores['id_oficial'].astype(str).str.split('.').str[0]
-    df_autores['idProposicao_link'] = df_autores['idProposicao_link'].astype(str).str.split('.').str[0]
-    
+    _t['C_sql_autores'] = time.time() - _s
+
+    _s = time.time()
+    df_autores['id_oficial'] = limpar_id(df_autores['id_oficial'])
+    df_autores['idProposicao_link'] = limpar_id(df_autores['idProposicao_link'])
+    _t['C_pandas_limpar_id'] = time.time() - _s
+
     # D. EMENTAS PARA NUVEM E TEMAS
     query_prop = "SELECT prop_id AS idProposicao_link, prop_ementa AS ementa, prop_palavras_chave AS palavras_chave, prop_sigla_tipo || ' ' || prop_numero || '/' || prop_ano AS nome_projeto FROM Proposicao"
+    _s = time.time()
     df_prop = pd.read_sql_query(query_prop, conn)
-    df_prop['idProposicao_link'] = df_prop['idProposicao_link'].astype(str).str.split('.').str[0]
+    _t['D_sql_proposicao'] = time.time() - _s
 
-    df_temas = pd.merge(df_autores, df_prop, on='idProposicao_link', how='inner')
+    _s = time.time()
+    df_prop['idProposicao_link'] = limpar_id(df_prop['idProposicao_link'])
+    _t['D_pandas_limpar'] = time.time() - _s
 
     # E. CLASSIFICAÇÃO TEMÁTICA (P3)
+    # IMPORTANTE: classificamos por proposição ÚNICA (df_prop), não pelo
+    # merge com autores (df_temas antigo). Uma proposição com 3 autores
+    # antes tinha sua ementa reprocessada 3x pelo str.count — desperdício
+    # puro, já que o tema de uma proposição não depende de quem a assina.
     TEMAS_KEYWORDS = {
         'Saúde':          ['saúde', 'médic', 'hospital', 'sus', 'doença', 'farmac', 'vacin', 'enferm', 'sanitár', 'anvisa', 'medicamento'],
         'Educação':       ['educaç', 'escola', 'ensino', 'universidade', 'professor', 'aluno', 'magistério', 'bolsa', 'enem', 'fundeb', 'creche'],
@@ -124,17 +168,38 @@ def carregar_tudo():
         'Agropecuário':   ['agrícol', 'agropec', 'rural', 'agricultor', 'pecuári', 'soja', 'agroneg'],
     }
 
-    if not df_temas.empty:
-        textos = df_temas['ementa'].fillna('').str.lower()
-        scores_df = pd.DataFrame(index=df_temas.index)
-        for tema, palavras in TEMAS_KEYWORDS.items():
-            pattern = '|'.join(palavras)
+    _s = time.time()
+    if not df_prop.empty:
+        textos = df_prop['ementa'].fillna('').str.lower()
+        # Compila cada regex uma única vez, fora de qualquer loop por linha.
+        patterns_compilados = {
+            tema: re.compile('|'.join(palavras))
+            for tema, palavras in TEMAS_KEYWORDS.items()
+        }
+        scores_df = pd.DataFrame(index=df_prop.index)
+        for tema, pattern in patterns_compilados.items():
+            # Passar o Pattern já compilado evita recompilar a regex
+            # a cada chamada interna do str.count.
             scores_df[tema] = textos.str.count(pattern)
         max_scores = scores_df.max(axis=1)
-        df_temas['tema'] = scores_df.idxmax(axis=1).where(max_scores > 0, other=None)
-        df_temas_classificado = df_temas.dropna(subset=['tema'])
+        df_prop_classificado = df_prop.copy()
+        df_prop_classificado['tema'] = scores_df.idxmax(axis=1).where(max_scores > 0, other=None)
+        df_prop_classificado = df_prop_classificado.dropna(subset=['tema'])
     else:
-        df_temas_classificado = pd.DataFrame(columns=['idProposicao_link', 'id_oficial', 'ementa', 'palavras_chave', 'nome_projeto', 'tema'])
+        df_prop_classificado = pd.DataFrame(columns=['idProposicao_link', 'ementa', 'palavras_chave', 'nome_projeto', 'tema'])
+    _t['E_pandas_classificacao_tematica'] = time.time() - _s
+
+    # Agora sim, mergeia com autores (aqui pode duplicar por autor — é o
+    # esperado, pois queremos saber quais deputados assinaram cada tema)
+    _s = time.time()
+    df_temas = pd.merge(df_autores, df_prop, on='idProposicao_link', how='inner')
+    df_temas_classificado = pd.merge(
+        df_autores,
+        df_prop_classificado,
+        on='idProposicao_link',
+        how='inner'
+    )
+    _t['E_pandas_merge_autores'] = time.time() - _s
 
     # F. VOTOS POR TEMA (P3)
     query_votos_p3 = """
@@ -150,14 +215,34 @@ def carregar_tudo():
     JOIN Votacao v ON vd.vot_id = v.vot_id
     WHERE v.prop_id IS NOT NULL
     """
+    _s = time.time()
     df_votos_detalhado = pd.read_sql_query(query_votos_p3, conn)
-    df_votos_detalhado['id_oficial'] = df_votos_detalhado['id_oficial'].astype(str).str.split('.').str[0]
-    df_votos_detalhado['idProposicao_link'] = df_votos_detalhado['idProposicao_link'].astype(str).str.split('.').str[0]
+    _t['F_sql_votos_p3'] = time.time() - _s
+
+    _s = time.time()
+    df_votos_detalhado['id_oficial'] = limpar_id(df_votos_detalhado['id_oficial'])
+    df_votos_detalhado['idProposicao_link'] = limpar_id(df_votos_detalhado['idProposicao_link'])
     df_votos_detalhado['id_votacao_str'] = df_votos_detalhado['id_votacao_str'].astype(str).str.strip()
-    
     df_votos_temas = pd.merge(df_votos_detalhado, df_temas_classificado[['idProposicao_link', 'tema', 'ementa', 'nome_projeto']], on='idProposicao_link', how='inner')
+    _t['F_pandas_limpar_merge'] = time.time() - _s
 
     conn.close()
+
+    _t['TOTAL'] = time.time() - _t0
+
+    # --- Relatório de tempos: imprime no terminal onde o streamlit roda ---
+    print("\n" + "=" * 60)
+    print("DIAGNÓSTICO DE TEMPO — carregar_tudo()")
+    print("=" * 60)
+    sql_total = sum(v for k, v in _t.items() if '_sql_' in k)
+    pandas_total = sum(v for k, v in _t.items() if '_pandas_' in k)
+    for nome, segundos in _t.items():
+        print(f"{nome:35s} {segundos:8.3f}s")
+    print("-" * 60)
+    print(f"{'TOTAL SQL (read_sql_query)':35s} {sql_total:8.3f}s")
+    print(f"{'TOTAL PANDAS (processamento)':35s} {pandas_total:8.3f}s")
+    print("=" * 60 + "\n")
+
     return df_principal, frequencia_partido, df_autores, df_temas, df_temas_classificado, df_votos_temas, TEMAS_KEYWORDS
 
 
@@ -451,7 +536,12 @@ else:
         contagem_temas = tema_dominante['tema_dominante'].value_counts().reset_index()
         contagem_temas.columns = ['Tema', 'Deputados']
 
-        prop_por_tema = df_tc_filtrado['tema'].value_counts().reset_index()
+        prop_por_tema = (
+            df_tc_filtrado
+            .drop_duplicates(subset=['idProposicao_link'])['tema']
+            .value_counts()
+            .reset_index()
+        )
         prop_por_tema.columns = ['Tema', 'Proposições']
 
         CORES_TEMAS = {
@@ -465,34 +555,55 @@ else:
         ])
 
         with tab_p2a:
+            # 1. Ordenar os dados e mapear as cores exatas para esta ordem
+            df_plot_a = prop_por_tema.sort_values('Proposições')
+            cores_a = df_plot_a['Tema'].map(CORES_TEMAS)
+
+            # 2. Gerar o gráfico SEM o parâmetro 'color=' para evitar barras fantasmas
             fig_p2a = px.bar(
-                prop_por_tema.sort_values('Proposições'), x='Proposições', y='Tema', orientation='h',
-                color='Tema', color_discrete_map=CORES_TEMAS,
+                df_plot_a, x='Proposições', y='Tema', orientation='h',
                 text_auto=True, template=template_grafico,
                 title="Total de proposições classificadas por eixo temático"
             )
-            fig_p2a.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False, height=450, bargap=0.3)
-            fig_p2a.update_traces(textposition='outside', cliponaxis=False)
+            
+            # 3. Pintar as barras diretamente e formatar os textos
+            fig_p2a.update_traces(
+                marker_color=cores_a, 
+                textposition='outside', 
+                cliponaxis=False
+            )
+            
+            # 4. Layout com altura fixa e barras grossas (bargap pequeno)
+            fig_p2a.update_layout(
+                yaxis={'categoryorder': 'total ascending'}, 
+                height=500, 
+                bargap=0.15 
+            )
             st.plotly_chart(fig_p2a, width='stretch')
 
         with tab_p2b:
+            # Mesma lógica aplicada ao segundo gráfico
+            df_plot_b = contagem_temas.sort_values('Deputados')
+            cores_b = df_plot_b['Tema'].map(CORES_TEMAS)
+
             fig_p2b = px.bar(
-                contagem_temas.sort_values('Deputados'), x='Deputados', y='Tema', orientation='h',
-                color='Tema', color_discrete_map=CORES_TEMAS,
+                df_plot_b, x='Deputados', y='Tema', orientation='h',
                 text_auto=True, template=template_grafico,
                 title="Número de deputados cujo tema principal de atuação é cada eixo"
             )
-            fig_p2b.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False, height=450)
-            fig_p2b.update_traces(textposition='outside', cliponaxis=False)
+            
+            fig_p2b.update_traces(
+                marker_color=cores_b, 
+                textposition='outside', 
+                cliponaxis=False
+            )
+            
+            fig_p2b.update_layout(
+                yaxis={'categoryorder': 'total ascending'}, 
+                height=500, 
+                bargap=0.15
+            )
             st.plotly_chart(fig_p2b, width='stretch')
-
-            st.subheader("Lista de Deputados por Tema Dominante")
-            tema_filtro = st.selectbox("Selecione o tema:", sorted(contagem_temas['Tema'].tolist()), key='tema_lista_p2b')
-            deps_tema = tema_dominante[tema_dominante['tema_dominante'] == tema_filtro]['id_oficial'].tolist()
-            nomes_tema = df_filtrado[df_filtrado['id_oficial'].isin(deps_tema)][['txNomeParlamentar', 'sgPartido', 'sgUF']].drop_duplicates().sort_values('txNomeParlamentar').reset_index(drop=True)
-            nomes_tema.columns = ['Nome', 'Partido', 'UF']
-            st.caption(f"{len(nomes_tema)} deputado(s) com tema dominante: **{tema_filtro}**")
-            st.dataframe(nomes_tema, width='stretch', hide_index=True)
 
         with tab_p2c:
             lista_deps_p2 = sorted(df_filtrado['txNomeParlamentar'].dropna().unique())
