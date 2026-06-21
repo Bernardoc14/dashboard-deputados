@@ -8,4 +8,4 @@ else
     echo "banco.db já existe. Pulando ETL."
 fi
 
-streamlit run app_novo.py --server.port $PORT --server.address 0.0.0.0
+streamlit run app.py --server.port $PORT --server.address 0.0.0.0
