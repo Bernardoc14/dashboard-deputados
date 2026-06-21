@@ -27,7 +27,13 @@ def criar_banco_de_dados():
     # ---------------------------------------------------------
     print("Carregando tabela Deputado...")
     df_dep = pd.read_csv(os.path.join('dados', 'deputados_detalhado.csv'), sep=';', encoding='utf-8', on_bad_lines='skip', engine='python')
-    df_dep['id_oficial'] = df_dep['uri'].str.split('/').str[-1].str.strip().astype(str).str.split('.').str[0]
+    # Extrai dep_id: usa coluna 'id' se existir, senão extrai da 'uri'
+    if 'id' in df_dep.columns:
+        df_dep['id_oficial'] = df_dep['id'].astype(str).str.split('.').str[0].str.strip()
+    elif 'uri' in df_dep.columns:
+        df_dep['id_oficial'] = df_dep['uri'].str.split('/').str[-1].str.strip().astype(str).str.split('.').str[0]
+    else:
+        raise KeyError("Não foi possível encontrar coluna de ID no deputados_detalhado.csv. Colunas disponíveis: " + str(df_dep.columns.tolist()))
     df_dep['escolaridade'] = df_dep['escolaridade'].fillna('Não Informado')
     
     df_dep = df_dep.rename(columns={
