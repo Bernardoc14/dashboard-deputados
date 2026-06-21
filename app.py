@@ -492,10 +492,19 @@ df_link_partido_filtrado = df_filtrado[['id_oficial', 'sgPartido']].drop_duplica
 
 # --- 4. MÉTRICAS GLOBAIS ---
 st.title("🏛️ Dashboard Legislativo - 57ª Legislatura (2023-2026)")
+
+# Calcula os valores
+total_gasto = df_filtrado['vlrLiquido'].sum()
+total_notas = len(df_filtrado)
+
+# Formata pro padrão americano primeiro, depois inverte ponto e vírgula
+gasto_br = f"{total_gasto:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+notas_br = f"{total_notas:,}".replace(",", ".")
+
 m1, m2, m3 = st.columns(3)
-m1.metric("Gasto Total Acumulado (Cota)", f"R$ {df_filtrado['vlrLiquido'].sum():,.2f}")
+m1.metric("Gasto Total Acumulado (Cota)", f"R$ {gasto_br}")
 m2.metric("Deputados Analisados (no filtro)", df_filtrado['txNomeParlamentar'].nunique())
-m3.metric("Notas Fiscais Processadas", f"{len(df_filtrado):,}")
+m3.metric("Notas Fiscais Processadas", notas_br)
 st.divider()
 
 def renderizar_p1():
@@ -1514,13 +1523,9 @@ def renderizar_p12():
         "e quais fornecedores mais recebem recursos parlamentares no geral."
     )
 
-    # df_filtrado já tem desp_fornecedor_nome — mas essa coluna vem do df_principal
-    # que não a inclui. Precisamos buscá-la direto do banco com os IDs do filtro.
-
-
     df_fornecedores = carregar_fornecedores()
     ids_no_filtro = df_filtrado['id_oficial'].unique()
-    
+
     # Aplica filtro global
     df_forn_filtrado = df_fornecedores[df_fornecedores['id_oficial'].isin(ids_no_filtro)].copy()
 
@@ -1531,6 +1536,9 @@ def renderizar_p12():
             "🌎 Top Fornecedores Geral", "👤 Por Deputado", "🔍 Por Fornecedor"
         ])
 
+        # -------------------------------------------------------------------
+        # ABA 1: VISÃO GERAL DE FORNECEDORES
+        # -------------------------------------------------------------------
         with tab_p12_geral:
             st.subheader("Fornecedores que mais receberam recursos parlamentares")
 
@@ -1567,12 +1575,17 @@ def renderizar_p12():
                 text_auto=',.0f'
             )
             fig_p12_g.update_layout(
-                yaxis={'categoryorder': 'total ascending'},
+                yaxis={'categoryorder': 'total ascending', 'type': 'category'},
                 coloraxis_showscale=False,
-                height=200 + (n_forn * 22)
+                height=max(400, 150 + (n_forn * 35)),
+                bargap=0.15
             )
+            fig_p12_g.update_traces(textposition='outside', cliponaxis=False)
             st.plotly_chart(fig_p12_g, width='stretch')
 
+        # -------------------------------------------------------------------
+        # ABA 2: VISÃO POR DEPUTADO
+        # -------------------------------------------------------------------
         with tab_p12_dep:
             st.subheader("Com quais fornecedores um deputado mais gastou?")
 
@@ -1604,35 +1617,38 @@ def renderizar_p12():
                     forn_dep,
                     x='total', y='fornecedor',
                     orientation='h',
-                    color='categoria',
-                    hover_data={'transacoes': True, 'categoria': True},
+                    color='total', color_continuous_scale='Blues', 
+                    hover_data={'transacoes': True, 'categoria': True}, 
                     labels={
                         'total': 'Total Gasto (R$)',
                         'fornecedor': 'Fornecedor',
-                        'categoria': 'Categoria de Despesa',
-                        'transacoes': 'Nº de Transações'
+                        'categoria': 'Categoria',
+                        'transacoes': 'Nº Transações'
                     },
                     template=template_grafico,
                     text_auto=',.0f'
                 )
                 fig_p12_dep.update_layout(
-                    yaxis={'categoryorder': 'total ascending'},
-                    legend_title='Categoria',
-                    height=200 + (n_forn_dep * 28)
+                    yaxis={'categoryorder': 'total ascending', 'type': 'category'},
+                    coloraxis_showscale=False, 
+                    height=max(400, 150 + (n_forn_dep * 35)),
+                    bargap=0.15
                 )
+                fig_p12_dep.update_traces(textposition='outside', cliponaxis=False)
                 st.plotly_chart(fig_p12_dep, width='stretch')
 
-                # Tabela detalhada
                 with st.expander("Ver tabela completa de fornecedores"):
                     df_tab_forn = forn_dep.copy()
                     df_tab_forn.columns = ['Fornecedor', 'Categoria', 'Total (R$)', 'Transações']
                     df_tab_forn['Total (R$)'] = df_tab_forn['Total (R$)'].map('R$ {:,.2f}'.format)
                     st.dataframe(df_tab_forn, hide_index=True, use_container_width=True)
 
+        # -------------------------------------------------------------------
+        # ABA 3: VISÃO POR FORNECEDOR
+        # -------------------------------------------------------------------
         with tab_p12_forn:
             st.subheader("Quais deputados mais pagaram a um fornecedor específico?")
 
-            # Lista os top 500 fornecedores por volume para o select não ficar enorme
             top500_forn = (
                 df_forn_filtrado
                 .groupby('fornecedor')['vlrLiquido']
@@ -1677,23 +1693,25 @@ def renderizar_p12():
                     deps_do_forn,
                     x='total', y='txNomeParlamentar',
                     orientation='h',
-                    color='sgPartido',
-                    hover_data={'sgUF': True, 'transacoes': True},
+                    color='total', color_continuous_scale='Purples', 
+                    hover_data={'sgUF': True, 'transacoes': True, 'sgPartido': True}, 
                     labels={
                         'total': 'Total Pago (R$)',
                         'txNomeParlamentar': 'Deputado',
                         'sgPartido': 'Partido',
-                        'transacoes': 'Nº de Transações'
+                        'transacoes': 'Nº Transações'
                     },
                     template=template_grafico,
                     text_auto=',.0f'
                 )
                 fig_p12_forn.update_layout(
-                    yaxis={'categoryorder': 'total ascending'},
-                    legend_title='Partido',
-                    height=200 + (n_deps_forn * 28)
+                    yaxis={'categoryorder': 'total ascending', 'type': 'category'},
+                    coloraxis_showscale=False, 
+                    height=max(400, 150 + (n_deps_forn * 35)),
+                    bargap=0.15
                 )
-                st.plotly_chart(fig_p12_forn, width='stretch')      
+                fig_p12_forn.update_traces(textposition='outside', cliponaxis=False)
+                st.plotly_chart(fig_p12_forn, width='stretch')
 
 def renderizar_p13():
     # --- 9. P13 (TIPOS DE DESPESA) ---
