@@ -498,173 +498,176 @@ m2.metric("Deputados Analisados (no filtro)", df_filtrado['txNomeParlamentar'].n
 m3.metric("Notas Fiscais Processadas", f"{len(df_filtrado):,}")
 st.divider()
 
-# --- 5. P1 (RANKING DE GASTOS POR DEPUTADO) ---
-st.header("💰 P1 — Ranking de Gastos por Deputado")
+def renderizar_p1():
+    # --- 5. P1 (RANKING DE GASTOS POR DEPUTADO) ---
+    st.header("💰 P1 — Ranking de Gastos por Deputado")
 
-col_slider, _ = st.columns([0.4, 0.6])
-with col_slider:
-    n_top = st.slider("Mostrar quantos deputados no ranking de gastos?", 5, 50, 15)
+    col_slider, _ = st.columns([0.4, 0.6])
+    with col_slider:
+        n_top = st.slider("Mostrar quantos deputados no ranking de gastos?", 5, 50, 15)
 
-ranking_gastos = df_filtrado.groupby(['txNomeParlamentar', 'sgPartido', 'sgUF'])['vlrLiquido'].sum().sort_values(ascending=False).reset_index()
+    ranking_gastos = df_filtrado.groupby(['txNomeParlamentar', 'sgPartido', 'sgUF'])['vlrLiquido'].sum().sort_values(ascending=False).reset_index()
 
-fig_p1 = px.bar(
-    ranking_gastos.head(n_top), x='vlrLiquido', y='txNomeParlamentar',
-    orientation='h', color='vlrLiquido', color_continuous_scale='Reds',
-    labels={'vlrLiquido': 'Total Gasto (R$)', 'txNomeParlamentar': 'Deputado'},
-    template=template_grafico, hover_data=['sgPartido', 'sgUF']
-)
-fig_p1.update_layout(yaxis={'categoryorder':'total ascending'}, height=400 + (n_top * 10))
-st.plotly_chart(fig_p1, width='stretch')
-st.divider()
+    fig_p1 = px.bar(
+        ranking_gastos.head(n_top), x='vlrLiquido', y='txNomeParlamentar',
+        orientation='h', color='vlrLiquido', color_continuous_scale='Reds',
+        labels={'vlrLiquido': 'Total Gasto (R$)', 'txNomeParlamentar': 'Deputado'},
+        template=template_grafico, hover_data=['sgPartido', 'sgUF']
+    )
+    fig_p1.update_layout(yaxis={'categoryorder':'total ascending'}, height=400 + (n_top * 10))
+    st.plotly_chart(fig_p1, width='stretch')
+    st.divider()
 
-# --- 5b. P2 (AGRUPAMENTO POR EIXO TEMÁTICO) ---
-st.header("🗂️ P2 — Agrupamento por Eixo Temático de Atuação")
+def renderizar_p2():
+    # --- 5b. P2 (AGRUPAMENTO POR EIXO TEMÁTICO) ---
+    st.header("🗂️ P2 — Agrupamento por Eixo Temático de Atuação")
 
-if df_temas_classificado.empty:
-    st.warning("⚠️ Nenhuma proposição classificada encontrada.")
-else:
-    ids_filtrados = df_filtrado['id_oficial'].unique()
-    df_tc_filtrado = df_temas_classificado[df_temas_classificado['id_oficial'].isin(ids_filtrados)]
-
-    if df_tc_filtrado.empty:
-        st.info("Nenhuma proposição classificada encontrada para os deputados no filtro atual.")
+    if df_temas_classificado.empty:
+        st.warning("⚠️ Nenhuma proposição classificada encontrada.")
     else:
-        perfil_dep = df_tc_filtrado.groupby(['id_oficial', 'tema']).size().reset_index(name='qtd')
-        idx_max = perfil_dep.groupby('id_oficial')['qtd'].idxmax()
-        tema_dominante = perfil_dep.loc[idx_max][['id_oficial', 'tema']].rename(columns={'tema': 'tema_dominante'})
+        ids_filtrados = df_filtrado['id_oficial'].unique()
+        df_tc_filtrado = df_temas_classificado[df_temas_classificado['id_oficial'].isin(ids_filtrados)]
 
-        contagem_temas = tema_dominante['tema_dominante'].value_counts().reset_index()
-        contagem_temas.columns = ['Tema', 'Deputados']
+        if df_tc_filtrado.empty:
+            st.info("Nenhuma proposição classificada encontrada para os deputados no filtro atual.")
+        else:
+            perfil_dep = df_tc_filtrado.groupby(['id_oficial', 'tema']).size().reset_index(name='qtd')
+            idx_max = perfil_dep.groupby('id_oficial')['qtd'].idxmax()
+            tema_dominante = perfil_dep.loc[idx_max][['id_oficial', 'tema']].rename(columns={'tema': 'tema_dominante'})
 
-        prop_por_tema = (
-            df_tc_filtrado
-            .drop_duplicates(subset=['idProposicao_link'])['tema']
-            .value_counts()
-            .reset_index()
-        )
-        prop_por_tema.columns = ['Tema', 'Proposições']
+            contagem_temas = tema_dominante['tema_dominante'].value_counts().reset_index()
+            contagem_temas.columns = ['Tema', 'Deputados']
 
-        CORES_TEMAS = {
-            'Saúde': '#e74c3c', 'Educação': '#3498db', 'Segurança': '#2c3e50',
-            'Tributário': '#f39c12', 'Econômico': '#27ae60', 'Ambiental': '#1abc9c',
-            'Infraestrutura': '#8e44ad', 'Social': '#e91e63', 'Agropecuário': '#795548',
-        }
-
-        tab_p2a, tab_p2b, tab_p2c, tab_p2d = st.tabs([
-            "📊 Proposições por Tema", "👥 Deputados por Tema", "🔍 Perfil Individual", "☁️ Nuvem por Tema"
-        ])
-
-        with tab_p2a:
-            # 1. Ordenar os dados e mapear as cores exatas para esta ordem
-            df_plot_a = prop_por_tema.sort_values('Proposições')
-            cores_a = df_plot_a['Tema'].map(CORES_TEMAS)
-
-            # 2. Gerar o gráfico SEM o parâmetro 'color=' para evitar barras fantasmas
-            fig_p2a = px.bar(
-                df_plot_a, x='Proposições', y='Tema', orientation='h',
-                text_auto=True, template=template_grafico,
-                title="Total de proposições classificadas por eixo temático"
+            prop_por_tema = (
+                df_tc_filtrado
+                .drop_duplicates(subset=['idProposicao_link'])['tema']
+                .value_counts()
+                .reset_index()
             )
-            
-            # 3. Pintar as barras diretamente e formatar os textos
-            fig_p2a.update_traces(
-                marker_color=cores_a, 
-                textposition='outside', 
-                cliponaxis=False
-            )
-            
-            # 4. Layout com altura fixa e barras grossas (bargap pequeno)
-            fig_p2a.update_layout(
-                yaxis={'categoryorder': 'total ascending'}, 
-                height=500, 
-                bargap=0.15 
-            )
-            st.plotly_chart(fig_p2a, width='stretch')
+            prop_por_tema.columns = ['Tema', 'Proposições']
 
-        with tab_p2b:
-            # Mesma lógica aplicada ao segundo gráfico
-            df_plot_b = contagem_temas.sort_values('Deputados')
-            cores_b = df_plot_b['Tema'].map(CORES_TEMAS)
+            CORES_TEMAS = {
+                'Saúde': '#e74c3c', 'Educação': '#3498db', 'Segurança': '#2c3e50',
+                'Tributário': '#f39c12', 'Econômico': '#27ae60', 'Ambiental': '#1abc9c',
+                'Infraestrutura': '#8e44ad', 'Social': '#e91e63', 'Agropecuário': '#795548',
+            }
 
-            fig_p2b = px.bar(
-                df_plot_b, x='Deputados', y='Tema', orientation='h',
-                text_auto=True, template=template_grafico,
-                title="Número de deputados cujo tema principal de atuação é cada eixo"
-            )
-            
-            fig_p2b.update_traces(
-                marker_color=cores_b, 
-                textposition='outside', 
-                cliponaxis=False
-            )
-            
-            fig_p2b.update_layout(
-                yaxis={'categoryorder': 'total ascending'}, 
-                height=500, 
-                bargap=0.15
-            )
-            st.plotly_chart(fig_p2b, width='stretch')
+            tab_p2a, tab_p2b, tab_p2c, tab_p2d = st.tabs([
+                "📊 Proposições por Tema", "👥 Deputados por Tema", "🔍 Perfil Individual", "☁️ Nuvem por Tema"
+            ])
 
-        with tab_p2c:
-            lista_deps_p2 = sorted(df_filtrado['txNomeParlamentar'].dropna().unique())
-            dep_p2 = st.selectbox("Selecione o deputado:", lista_deps_p2, key='dep_p2')
-            id_dep_p2 = None
-            dep_p2_rows = df_filtrado[df_filtrado['txNomeParlamentar'] == dep_p2]
-            if not dep_p2_rows.empty:
-                id_dep_p2 = dep_p2_rows['id_oficial'].iloc[0]
-            if id_dep_p2:
-                perfil_ind = df_tc_filtrado[df_tc_filtrado['id_oficial'] == id_dep_p2]['tema'].value_counts().reset_index()
-                perfil_ind.columns = ['Tema', 'Proposições']
-                if perfil_ind.empty:
-                    st.info(f"{dep_p2} não possui proposições classificadas nos eixos temáticos.")
-                else:
-                    fig_ind_p2 = px.pie(
-                        perfil_ind, values='Proposições', names='Tema',
-                        color='Tema', color_discrete_map=CORES_TEMAS,
-                        hole=0.4, template=template_grafico,
-                        title=f"Distribuição temática — {dep_p2}"
-                    )
-                    st.plotly_chart(fig_ind_p2, width='stretch')
+            with tab_p2a:
+                # 1. Ordenar os dados e mapear as cores exatas para esta ordem
+                df_plot_a = prop_por_tema.sort_values('Proposições')
+                cores_a = df_plot_a['Tema'].map(CORES_TEMAS)
 
-        with tab_p2d:
-            tema_nuvem = st.selectbox("Selecione o eixo temático:", sorted(TEMAS_KEYWORDS.keys()), key='tema_nuvem_p2d')
-            palavras_tema = df_tc_filtrado[df_tc_filtrado['tema'] == tema_nuvem]['palavras_chave'].dropna()
-            
-            if len(palavras_tema) == 0:
-                st.warning("Nenhuma palavra-chave encontrada para este tema com os filtros atuais.")
-            else:
-                freq_palavras = obter_frequencia_palavras_chave(palavras_tema)
+                # 2. Gerar o gráfico SEM o parâmetro 'color=' para evitar barras fantasmas
+                fig_p2a = px.bar(
+                    df_plot_a, x='Proposições', y='Tema', orientation='h',
+                    text_auto=True, template=template_grafico,
+                    title="Total de proposições classificadas por eixo temático"
+                )
                 
-                if freq_palavras.empty:
-                    st.info("Texto insuficiente para gerar a nuvem.")
+                # 3. Pintar as barras diretamente e formatar os textos
+                fig_p2a.update_traces(
+                    marker_color=cores_a, 
+                    textposition='outside', 
+                    cliponaxis=False
+                )
+                
+                # 4. Layout com altura fixa e barras grossas (bargap pequeno)
+                fig_p2a.update_layout(
+                    yaxis={'categoryorder': 'total ascending'}, 
+                    height=500, 
+                    bargap=0.15 
+                )
+                st.plotly_chart(fig_p2a, width='stretch')
+
+            with tab_p2b:
+                # Mesma lógica aplicada ao segundo gráfico
+                df_plot_b = contagem_temas.sort_values('Deputados')
+                cores_b = df_plot_b['Tema'].map(CORES_TEMAS)
+
+                fig_p2b = px.bar(
+                    df_plot_b, x='Deputados', y='Tema', orientation='h',
+                    text_auto=True, template=template_grafico,
+                    title="Número de deputados cujo tema principal de atuação é cada eixo"
+                )
+                
+                fig_p2b.update_traces(
+                    marker_color=cores_b, 
+                    textposition='outside', 
+                    cliponaxis=False
+                )
+                
+                fig_p2b.update_layout(
+                    yaxis={'categoryorder': 'total ascending'}, 
+                    height=500, 
+                    bargap=0.15
+                )
+                st.plotly_chart(fig_p2b, width='stretch')
+
+            with tab_p2c:
+                lista_deps_p2 = sorted(df_filtrado['txNomeParlamentar'].dropna().unique())
+                dep_p2 = st.selectbox("Selecione o deputado:", lista_deps_p2, key='dep_p2')
+                id_dep_p2 = None
+                dep_p2_rows = df_filtrado[df_filtrado['txNomeParlamentar'] == dep_p2]
+                if not dep_p2_rows.empty:
+                    id_dep_p2 = dep_p2_rows['id_oficial'].iloc[0]
+                if id_dep_p2:
+                    perfil_ind = df_tc_filtrado[df_tc_filtrado['id_oficial'] == id_dep_p2]['tema'].value_counts().reset_index()
+                    perfil_ind.columns = ['Tema', 'Proposições']
+                    if perfil_ind.empty:
+                        st.info(f"{dep_p2} não possui proposições classificadas nos eixos temáticos.")
+                    else:
+                        fig_ind_p2 = px.pie(
+                            perfil_ind, values='Proposições', names='Tema',
+                            color='Tema', color_discrete_map=CORES_TEMAS,
+                            hole=0.4, template=template_grafico,
+                            title=f"Distribuição temática — {dep_p2}"
+                        )
+                        st.plotly_chart(fig_ind_p2, width='stretch')
+
+            with tab_p2d:
+                tema_nuvem = st.selectbox("Selecione o eixo temático:", sorted(TEMAS_KEYWORDS.keys()), key='tema_nuvem_p2d')
+                palavras_tema = df_tc_filtrado[df_tc_filtrado['tema'] == tema_nuvem]['palavras_chave'].dropna()
+                
+                if len(palavras_tema) == 0:
+                    st.warning("Nenhuma palavra-chave encontrada para este tema com os filtros atuais.")
                 else:
-                    col_nuvem, col_tabela = st.columns([0.7, 0.3])
+                    freq_palavras = obter_frequencia_palavras_chave(palavras_tema)
                     
-                    with col_nuvem:
-                        wc_tema = WordCloud(
-                            width=900, height=500, background_color='white',
-                            colormap='tab10', min_font_size=10, max_words=80
-                        ).generate_from_frequencies(freq_palavras.to_dict())
+                    if freq_palavras.empty:
+                        st.info("Texto insuficiente para gerar a nuvem.")
+                    else:
+                        col_nuvem, col_tabela = st.columns([0.7, 0.3])
                         
-                        fig_nuvem_tema, ax_nt = plt.subplots(figsize=(12, 6))
-                        ax_nt.imshow(wc_tema, interpolation='bilinear')
-                        ax_nt.axis('off')
-                        plt.tight_layout(pad=0)
-                        st.pyplot(fig_nuvem_tema)
-                        plt.close(fig_nuvem_tema)
-                        st.caption(f"Nuvem gerada a partir de proposições classificadas como **{tema_nuvem}**")
-                    
-                    with col_tabela:
-                        df_freq_tema = pd.DataFrame({'Palavra-chave': freq_palavras.index, 'Frequência': freq_palavras.values})
-                        st.dataframe(df_freq_tema, hide_index=True, height=450, use_container_width=True)
+                        with col_nuvem:
+                            wc_tema = WordCloud(
+                                width=900, height=500, background_color='white',
+                                colormap='tab10', min_font_size=10, max_words=80
+                            ).generate_from_frequencies(freq_palavras.to_dict())
+                            
+                            fig_nuvem_tema, ax_nt = plt.subplots(figsize=(12, 6))
+                            ax_nt.imshow(wc_tema, interpolation='bilinear')
+                            ax_nt.axis('off')
+                            plt.tight_layout(pad=0)
+                            st.pyplot(fig_nuvem_tema)
+                            plt.close(fig_nuvem_tema)
+                            st.caption(f"Nuvem gerada a partir de proposições classificadas como **{tema_nuvem}**")
+                        
+                        with col_tabela:
+                            df_freq_tema = pd.DataFrame({'Palavra-chave': freq_palavras.index, 'Frequência': freq_palavras.values})
+                            st.dataframe(df_freq_tema, hide_index=True, height=450, use_container_width=True)
 
-st.divider()
+    st.divider()
 
-# --- 5c. P3 (🗳️ COMO O DEPUTADO VOTOU POR TEMA) ---
-st.header("🗳️ P3 — Como o Deputado Votou por Tema")
 
 @st.fragment
 def renderizar_p3():
+    # --- 5c. P3 (🗳️ COMO O DEPUTADO VOTOU POR TEMA) ---
+    st.header("🗳️ P3 — Como o Deputado Votou por Tema")
+
     col_p3a, col_p3b = st.columns(2)
     with col_p3a:
         dep_p3 = st.selectbox("Selecione o Deputado:", sorted(df_filtrado['txNomeParlamentar'].dropna().unique()), key='dep_p3')
@@ -888,833 +891,904 @@ def renderizar_p3():
     subtitulo_c6 = f"{rebeldia_total} voto(s) em {votos_comparaveis_partido} votações c/ o partido" if votos_comparaveis_partido > 0 else "Sem votos nominais comparáveis"
     c6.metric("🏴‍☠️ Rebeldia Temática", f"{perc_rebeldia:.0f}% divergente" if votos_comparaveis_partido > 0 else "N/A", subtitulo_c6, delta_color="off")
 
-renderizar_p3()
+    st.divider()
 
-st.divider()
 
-# --- 6. P4 (PERFIL POR ESCOLARIDADE + DETALHAMENTO) ---
-st.header("🎓 P4 — Perfil por Escolaridade")
+def renderizar_p4():
+    # --- 6. P4 (PERFIL POR ESCOLARIDADE + DETALHAMENTO) ---
+    st.header("🎓 P4 — Perfil por Escolaridade")
 
-df_u = df_filtrado.drop_duplicates(subset=['id_oficial'])
-esc_data = df_u['escolaridade'].value_counts().reset_index()
-esc_data.columns = ['Escolaridade', 'Qtd']
+    df_u = df_filtrado.drop_duplicates(subset=['id_oficial'])
+    esc_data = df_u['escolaridade'].value_counts().reset_index()
+    esc_data.columns = ['Escolaridade', 'Qtd']
 
-fig_p4 = px.bar(
-    esc_data, x='Qtd', y='Escolaridade', 
-    orientation='h', color='Qtd', color_continuous_scale='Blues', 
-    text_auto=True, template=template_grafico,
-    labels={'Qtd': 'Número de Deputados'}
-)
-fig_p4.update_layout(yaxis={'categoryorder':'total ascending'})
-st.plotly_chart(fig_p4, width='stretch')
+    fig_p4 = px.bar(
+        esc_data, x='Qtd', y='Escolaridade', 
+        orientation='h', color='Qtd', color_continuous_scale='Blues', 
+        text_auto=True, template=template_grafico,
+        labels={'Qtd': 'Número de Deputados'}
+    )
+    fig_p4.update_layout(yaxis={'categoryorder':'total ascending'})
+    st.plotly_chart(fig_p4, width='stretch')
 
-st.subheader("🔍 Ver Deputados por Nível de Escolaridade")
-escolaridades_disponiveis = sorted(df_u['escolaridade'].dropna().unique())
+    st.subheader("🔍 Ver Deputados por Nível de Escolaridade")
+    escolaridades_disponiveis = sorted(df_u['escolaridade'].dropna().unique())
 
-if escolaridades_disponiveis:
-    nivel_sel = st.selectbox("Selecione um nível de instrução para listar os parlamentares:", escolaridades_disponiveis)
-    df_nivel_sel = df_u[df_u['escolaridade'] == nivel_sel][['txNomeParlamentar', 'sgPartido', 'sgUF']].sort_values(by='txNomeParlamentar')
-    st.markdown(f"**Parlamentares com '{nivel_sel}' ({len(df_nivel_sel)} encontrados):**")
-    st.dataframe(df_nivel_sel, width='stretch', hide_index=True)
-else:
-    st.info("Nenhum dado de escolaridade disponível para os filtros atuais.")
+    if escolaridades_disponiveis:
+        nivel_sel = st.selectbox("Selecione um nível de instrução para listar os parlamentares:", escolaridades_disponiveis)
+        df_nivel_sel = df_u[df_u['escolaridade'] == nivel_sel][['txNomeParlamentar', 'sgPartido', 'sgUF']].sort_values(by='txNomeParlamentar')
+        st.markdown(f"**Parlamentares com '{nivel_sel}' ({len(df_nivel_sel)} encontrados):**")
+        st.dataframe(df_nivel_sel, width='stretch', hide_index=True)
+    else:
+        st.info("Nenhum dado de escolaridade disponível para os filtros atuais.")
 
-st.divider()
+    st.divider()
 
-# --- 7. P10 (🤝 ALINHAMENTO INTERNO DOS PARTIDOS) ---
-st.header("🤝 P10 — Alinhamento Interno dos Partidos (Fidelidade à Bancada)")
 
-partidos_no_filtro = df_filtrado['sgPartido'].unique()
-df_alinhamento_filtrado = df_alinhamento[df_alinhamento['sgPartido'].isin(partidos_no_filtro)].copy()
+def renderizar_p6():
+    # =============================================================================
+    # --- 10. P6 — ESCOLARIDADE × (GASTOS / FIDELIDADE / PROPOSIÇÕES / PRESENÇA) ---
+    # =============================================================================
+    st.header("🎓 P6 — Escolaridade em Perspectiva")
+    st.markdown(
+        "Correlação entre o nível de instrução do deputado e quatro dimensões da sua atuação: "
+        "gastos, fidelidade partidária, produção legislativa e presença."
+    )
 
-if df_alinhamento_filtrado.empty:
-    st.warning("⚠️ Dados de votações insuficientes para os partidos selecionados ou não contêm votos 'Sim'/'Não'. Impossível calcular o alinhamento interno (P10) no momento.")
-else:
-    tab_p10_geral, tab_p10_busca, tab_p10_divididas = st.tabs([
-        "📊 Alinhamento Geral",
-        "🔍 Buscar Votação",
-        "⚡ Mais Divididas"
+    # ------------------------------------------------------------------
+    # BASE COMPARTILHADA: perfil por deputado (1 linha por deputado)
+    # ------------------------------------------------------------------
+    perfil_dep_esc = (
+        df_filtrado[['id_oficial', 'txNomeParlamentar', 'escolaridade', 'sgPartido', 'sgUF']]
+        .drop_duplicates(subset=['id_oficial'])
+    )
+
+    # Ordem pedagógica dos níveis de escolaridade — usada em todos os sub-gráficos
+    ORDEM_ESC = [
+        'Ensino Fundamental Incompleto', 'Ensino Fundamental',
+        'Ensino Médio Incompleto', 'Ensino Médio',
+        'Superior Incompleto', 'Superior',
+        'Especialização', 'Mestrado', 'Doutorado', 'Não Informado'
+    ]
+    niveis_presentes = [n for n in ORDEM_ESC if n in perfil_dep_esc['escolaridade'].unique()]
+    niveis_extras = [
+        n for n in perfil_dep_esc['escolaridade'].dropna().unique()
+        if n not in ORDEM_ESC
+    ]
+    ordem_final = niveis_presentes + niveis_extras
+
+    def aplicar_ordem(df, col='escolaridade'):
+        df = df.copy()
+        df = df[df[col].notna()]   # <-- remove linhas com escolaridade nula
+        df[col] = pd.Categorical(df[col], categories=ordem_final, ordered=True)
+        return df.sort_values(col)
+
+    def grafico_media_boxplot(df_ind, col_y, label_y, key_prefix, cor_escala='Blues'):
+        """Reutilizável: gera aba de média + aba de boxplot para qualquer métrica × escolaridade."""
+        tab_med, tab_box = st.tabs(["📊 Média por Nível", "📦 Distribuição (Boxplot)"])
+
+        media = (
+            df_ind.groupby('escolaridade')[col_y]
+            .agg(['mean', 'count'])
+            .reset_index()
+            .rename(columns={'mean': 'media', 'count': 'n'})
+        )
+        media = aplicar_ordem(media)
+
+        with tab_med:
+            fig_m = px.bar(
+                media, x='escolaridade', y='media',
+                color='media', color_continuous_scale=cor_escala,
+                text_auto=',.1f',
+                hover_data=['n'],
+                labels={'escolaridade': 'Escolaridade', 'media': label_y, 'n': 'Nº Deputados'},
+                template=template_grafico,
+            )
+            fig_m.update_layout(xaxis_tickangle=-30, coloraxis_showscale=False)
+            fig_m.update_traces(textposition='outside')
+            st.plotly_chart(fig_m, width='stretch')
+            st.caption("Passe o mouse sobre as barras para ver o número de deputados em cada nível.")
+
+        with tab_box:
+            df_box = aplicar_ordem(df_ind)
+            fig_b = px.box(
+                df_box, x='escolaridade', y=col_y,
+                color='escolaridade', points='outliers',
+                labels={'escolaridade': 'Escolaridade', col_y: label_y},
+                template=template_grafico,
+            )
+            fig_b.update_layout(xaxis_tickangle=-30, showlegend=False)
+            st.plotly_chart(fig_b, width='stretch')
+
+    # ------------------------------------------------------------------
+    # FUNÇÃO NOVA: presença individual por deputado (P6d)
+    # ------------------------------------------------------------------
+    @st.cache_data
+    def carregar_presenca_individual():
+        conn = sqlite3.connect('banco.db')
+
+        # Sessões Deliberativas (plenário)
+        q_plenario = """
+        SELECT p.dep_id AS id_oficial, COUNT(p.evt_id) AS presencas_plenario
+        FROM PresencaDeputado p
+        JOIN Evento e ON p.evt_id = e.evt_id
+        WHERE e.evt_tipo = 'Sessão Deliberativa'
+        GROUP BY p.dep_id
+        """
+        df_pl = pd.read_sql_query(q_plenario, conn)
+        df_pl['id_oficial'] = df_pl['id_oficial'].astype(str).str.split('.').str[0]
+
+        # Todos os eventos (qualquer tipo)
+        q_todos = """
+        SELECT dep_id AS id_oficial, COUNT(evt_id) AS presencas_total
+        FROM PresencaDeputado
+        GROUP BY dep_id
+        """
+        df_todos = pd.read_sql_query(q_todos, conn)
+        df_todos['id_oficial'] = df_todos['id_oficial'].astype(str).str.split('.').str[0]
+
+        conn.close()
+
+        df_pres_ind = pd.merge(df_todos, df_pl, on='id_oficial', how='left')
+        df_pres_ind['presencas_plenario'] = df_pres_ind['presencas_plenario'].fillna(0).astype(int)
+        # Taxa: % das presenças totais que foram em plenário
+        df_pres_ind['taxa_plenario'] = (
+            df_pres_ind['presencas_plenario'] / df_pres_ind['presencas_total'] * 100
+        ).round(1)
+        return df_pres_ind
+
+    df_pres_individual = carregar_presenca_individual()
+
+    # ------------------------------------------------------------------
+    # ABAS PRINCIPAIS DE P6
+    # ------------------------------------------------------------------
+    tab_p6a, tab_p6b, tab_p6c, tab_p6d = st.tabs([
+        "💰 a) Gastos",
+        "🤝 b) Fidelidade Partidária",
+        "📜 c) Proposições",
+        "📅 d) Presença",
     ])
 
-    with tab_p10_geral:
-        st.markdown("Porcentagem média de vezes que os deputados de cada partido votaram junto com a maioria da sua própria bancada (em votações Sim/Não).")
-        df_alinhamento_filtrado.sort_values(by='perc_alinhamento', ascending=False, inplace=True)
-        fig_p10 = px.bar(
-            df_alinhamento_filtrado,
-            x='sgPartido', y='perc_alinhamento',
-            color='perc_alinhamento', color_continuous_scale='Cividis',
-            labels={'perc_alinhamento': 'Alinhamento Médio (%)', 'sgPartido': 'Partido'},
-            template=template_grafico,
-            text_auto='.1f'
+    # ── P6a: Escolaridade × Gastos ─────────────────────────────────────
+    with tab_p6a:
+        st.subheader("Escolaridade × Gasto médio da cota parlamentar")
+
+        gastos_por_dep = (
+            df_filtrado.groupby('id_oficial')['vlrLiquido']
+            .sum().reset_index()
+            .rename(columns={'vlrLiquido': 'total_gasto'})
         )
-        fig_p10.update_layout(xaxis={'categoryorder': 'total descending'})
-        st.plotly_chart(fig_p10, width='stretch')
+        df_esc_gastos = pd.merge(perfil_dep_esc, gastos_por_dep, on='id_oficial', how='inner')
 
-    with tab_p10_busca:
-        st.markdown("Busque pelo tema ou descrição de uma votação e veja como cada partido votou.")
-
-        if df_votos_contagem.empty:
-            st.info("Dados de votações não disponíveis para a busca.")
+        if df_esc_gastos.empty:
+            st.info("Sem dados suficientes.")
         else:
-            busca_tema = st.text_input("🔎 Buscar votação por tema/descrição:", placeholder="Ex: reforma, imposto, educação...")
-            df_contagem_filtrada = df_votos_contagem[df_votos_contagem['sgPartido'].isin(partidos_no_filtro)].copy()
-            opcoes_votacao = df_contagem_filtrada[['id_votacao_str', 'tema_label']].drop_duplicates(subset='id_votacao_str')
+            grafico_media_boxplot(df_esc_gastos, 'total_gasto', 'Gasto Médio (R$)', 'p6a', 'Blues')
 
-            if busca_tema:
-                mask_busca = opcoes_votacao['tema_label'].str.contains(busca_tema, case=False, na=False)
-                opcoes_votacao = opcoes_votacao[mask_busca]
+            with st.expander("📋 Ver tabela detalhada"):
+                df_tab = df_esc_gastos[['txNomeParlamentar','sgPartido','sgUF','escolaridade','total_gasto']].copy()
+                df_tab = df_tab.sort_values('total_gasto', ascending=False).reset_index(drop=True)
+                df_tab.columns = ['Deputado','Partido','UF','Escolaridade','Gasto Total (R$)']
+                df_tab['Gasto Total (R$)'] = df_tab['Gasto Total (R$)'].map('R$ {:,.2f}'.format)
+                esc_sel_a = st.multiselect("Filtrar escolaridade:", ordem_final, default=[], key='esc_tab_a')
+                df_exib_a = df_tab if not esc_sel_a else df_tab[df_tab['Escolaridade'].isin(esc_sel_a)]
+                st.dataframe(df_exib_a, hide_index=True, use_container_width=True, height=380)
 
-            if opcoes_votacao.empty:
-                st.warning("Nenhuma votação encontrada para esse termo.")
-            else:
-                opcoes_votacao = opcoes_votacao.copy()
-                opcoes_votacao['label_curto'] = opcoes_votacao['tema_label'].str[:120]
-                mapa_label_id = dict(zip(opcoes_votacao['label_curto'], opcoes_votacao['id_votacao_str']))
+    # ── P6b: Escolaridade × Fidelidade Partidária ──────────────────────
+    with tab_p6b:
+        st.subheader("Escolaridade × Fidelidade à bancada")
+        st.caption(
+            "Fidelidade = % de votações em que o deputado votou com a maioria do seu partido. "
+            "Calculada individualmente a partir dos dados de alinhamento por partido (P10)."
+        )
 
-                votacao_escolhida_label = st.selectbox(
-                    f"{len(opcoes_votacao)} votação(ões) encontrada(s) — selecione uma:",
-                    options=list(mapa_label_id.keys())
-                )
-                votacao_escolhida_id = mapa_label_id[votacao_escolhida_label]
-                df_vot_sel = df_contagem_filtrada[df_contagem_filtrada['id_votacao_str'] == votacao_escolhida_id].copy()
+        # df_alinhamento está por partido; precisamos descer para o nível do deputado.
+        # Usamos df_votos_contagem que já tem sgPartido + id_votacao_str.
+        # A fidelidade individual exige recalcular — fazemos isso aqui com cache.
 
-                if not df_vot_sel.empty:
-                    fig_busca = px.bar(
-                        df_vot_sel,
-                        x='sgPartido', y='perc', color='voto',
-                        color_discrete_map={'Sim': '#2ecc71', 'Não': '#e74c3c'},
-                        barmode='stack',
-                        labels={'perc': '% de Votos', 'sgPartido': 'Partido', 'voto': 'Voto'},
-                        template=template_grafico,
-                        text_auto='.0f'
-                    )
-                    fig_busca.update_layout(yaxis_title='% de Votos', legend_title='Voto', xaxis={'categoryorder': 'total descending'})
-                    st.plotly_chart(fig_busca, width='stretch')
+        fidelidade_dep = calcular_fidelidade_individual()
 
-                    resumo = df_vot_sel.loc[df_vot_sel.groupby('sgPartido')['perc'].idxmax()][['sgPartido', 'voto', 'perc']].copy()
-                    resumo.columns = ['Partido', 'Voto Majoritário', '% Maioria']
-                    resumo['% Maioria'] = resumo['% Maioria'].round(1)
-                    resumo.sort_values('Partido', inplace=True)
-                    st.markdown("**Voto majoritário por partido nessa votação:**")
-                    st.dataframe(resumo, width='stretch', hide_index=True)
+        ids_no_filtro_p6 = df_filtrado['id_oficial'].unique()
+        df_esc_fid = pd.merge(perfil_dep_esc, fidelidade_dep, on='id_oficial', how='inner')
+        df_esc_fid = df_esc_fid[df_esc_fid['id_oficial'].isin(ids_no_filtro_p6)]
+        
 
-    with tab_p10_divididas:
-        st.markdown("Votações onde os partidos tiveram **menor coesão interna** — mais deputados do mesmo partido votando de formas diferentes.")
+        # Filtra apenas deputados no filtro global
+        ids_no_filtro_p6 = df_filtrado['id_oficial'].unique()
+        df_esc_fid = pd.merge(perfil_dep_esc, fidelidade_dep, on='id_oficial', how='inner')
+        df_esc_fid = df_esc_fid[df_esc_fid['id_oficial'].isin(ids_no_filtro_p6)]
 
-        if df_divisao.empty:
-            st.info("Dados de divisão não disponíveis.")
+        if df_esc_fid.empty:
+            st.info("Sem dados de votações suficientes para calcular fidelidade individual.")
         else:
-            col_n, _ = st.columns([0.3, 0.7])
-            with col_n:
-                n_divididas = st.slider("Quantas votações exibir?", 5, 30, 10)
+            grafico_media_boxplot(df_esc_fid, 'fidelidade', 'Fidelidade Média (%)', 'p6b', 'Purples')
 
-            ids_com_dados = df_votos_contagem[df_votos_contagem['sgPartido'].isin(partidos_no_filtro)]['id_votacao_str'].unique()
-            df_div_filtrada = df_divisao[df_divisao['id_votacao_str'].isin(ids_com_dados)].head(n_divididas).copy()
+            with st.expander("📋 Ver tabela detalhada"):
+                df_tab_b = df_esc_fid[['txNomeParlamentar','sgPartido','sgUF','escolaridade','fidelidade']].copy()
+                df_tab_b = df_tab_b.sort_values('fidelidade', ascending=False).reset_index(drop=True)
+                df_tab_b.columns = ['Deputado','Partido','UF','Escolaridade','Fidelidade (%)']
+                esc_sel_b = st.multiselect("Filtrar escolaridade:", ordem_final, default=[], key='esc_tab_b')
+                df_exib_b = df_tab_b if not esc_sel_b else df_tab_b[df_tab_b['Escolaridade'].isin(esc_sel_b)]
+                st.dataframe(df_exib_b, hide_index=True, use_container_width=True, height=380)
 
-            if df_div_filtrada.empty:
-                st.warning("Nenhuma votação encontrada para os partidos selecionados.")
+    # ── P6c: Escolaridade × Nº de Proposições ─────────────────────────
+    with tab_p6c:
+        st.subheader("Escolaridade × Número de proposições assinadas")
+
+        # df_autores: id_oficial + idProposicao_link (já carregado globalmente)
+        props_por_dep = (
+            df_autores.groupby('id_oficial')['idProposicao_link']
+            .count().reset_index(name='n_proposicoes')
+        )
+        df_esc_prop = pd.merge(perfil_dep_esc, props_por_dep, on='id_oficial', how='left')
+        df_esc_prop['n_proposicoes'] = df_esc_prop['n_proposicoes'].fillna(0).astype(int)
+        df_esc_prop = df_esc_prop[df_esc_prop['id_oficial'].isin(ids_no_filtro_p6)]
+
+        if df_esc_prop.empty:
+            st.info("Sem dados de proposições para o filtro atual.")
+        else:
+            grafico_media_boxplot(df_esc_prop, 'n_proposicoes', 'Média de Proposições Assinadas', 'p6c', 'Greens')
+
+            with st.expander("📋 Ver tabela detalhada"):
+                df_tab_c = df_esc_prop[['txNomeParlamentar','sgPartido','sgUF','escolaridade','n_proposicoes']].copy()
+                df_tab_c = df_tab_c.sort_values('n_proposicoes', ascending=False).reset_index(drop=True)
+                df_tab_c.columns = ['Deputado','Partido','UF','Escolaridade','Nº Proposições']
+                esc_sel_c = st.multiselect("Filtrar escolaridade:", ordem_final, default=[], key='esc_tab_c')
+                df_exib_c = df_tab_c if not esc_sel_c else df_tab_c[df_tab_c['Escolaridade'].isin(esc_sel_c)]
+                st.dataframe(df_exib_c, hide_index=True, use_container_width=True, height=380)
+
+    # ── P6d: Escolaridade × Presença ───────────────────────────────────
+    with tab_p6d:
+        st.subheader("Escolaridade × Presença em eventos e no plenário")
+        st.caption(
+            "**Presença total** = todos os eventos registrados no sistema (comissões, audiências, etc.). "
+            "**Plenário** = apenas Sessões Deliberativas. "
+            "**Taxa plenário** = % das presenças totais que foram em sessões deliberativas."
+        )
+
+        df_esc_pres = pd.merge(perfil_dep_esc, df_pres_individual, on='id_oficial', how='left')
+        df_esc_pres['presencas_total']   = df_esc_pres['presencas_total'].fillna(0).astype(int)
+        df_esc_pres['presencas_plenario'] = df_esc_pres['presencas_plenario'].fillna(0).astype(int)
+        df_esc_pres['taxa_plenario']     = df_esc_pres['taxa_plenario'].fillna(0)
+        df_esc_pres = df_esc_pres[df_esc_pres['id_oficial'].isin(ids_no_filtro_p6)]
+
+        if df_esc_pres.empty:
+            st.info("Sem dados de presença para o filtro atual.")
+        else:
+            metrica_p6d = st.radio(
+                "Qual métrica analisar?",
+                ["Presença total (todos eventos)", "Presença no plenário (deliberativas)", "Taxa plenário (%)"],
+                horizontal=True,
+                key='radio_p6d'
+            )
+
+            col_map = {
+                "Presença total (todos eventos)":          ('presencas_total',    'Média de Presenças Totais',        'Oranges'),
+                "Presença no plenário (deliberativas)":    ('presencas_plenario', 'Média de Presenças no Plenário',   'Reds'),
+                "Taxa plenário (%)":                       ('taxa_plenario',      'Taxa Média Plenário (%)',           'YlOrRd'),
+            }
+            col_y_d, label_y_d, cor_d = col_map[metrica_p6d]
+
+            grafico_media_boxplot(df_esc_pres, col_y_d, label_y_d, 'p6d', cor_d)
+
+            with st.expander("📋 Ver tabela detalhada"):
+                df_tab_d = df_esc_pres[[
+                    'txNomeParlamentar','sgPartido','sgUF','escolaridade',
+                    'presencas_total','presencas_plenario','taxa_plenario'
+                ]].copy().sort_values('presencas_total', ascending=False).reset_index(drop=True)
+                df_tab_d.columns = ['Deputado','Partido','UF','Escolaridade',
+                                    'Presenças Totais','Presenças Plenário','Taxa Plenário (%)']
+                esc_sel_d = st.multiselect("Filtrar escolaridade:", ordem_final, default=[], key='esc_tab_d')
+                df_exib_d = df_tab_d if not esc_sel_d else df_tab_d[df_tab_d['Escolaridade'].isin(esc_sel_d)]
+                st.dataframe(df_exib_d, hide_index=True, use_container_width=True, height=380)
+
+    st.divider()
+
+def renderizar_p8():
+    # =============================================================================
+    # --- 11. P8 — INFLUÊNCIA: % DE PROPOSTAS APROVADAS POR DEPUTADO ---
+    # =============================================================================
+    st.header("🏆 P8 — Influência Legislativa: Propostas Aprovadas")
+    st.markdown(
+        "Mede a **efetividade legislativa** de cada deputado: qual percentual das proposições "
+        "que ele assinou foi aprovada, e qual sua participação no total de aprovações do período."
+    )
+
+
+
+
+    df_influencia = calcular_influencia_p8()
+
+    # Junta com nome/partido/UF/escolaridade do df_principal
+    perfil_deps = df_principal[['id_oficial', 'txNomeParlamentar', 'sgPartido', 'sgUF']].drop_duplicates(subset=['id_oficial'])
+    df_inf_completo = pd.merge(df_influencia, perfil_deps, on='id_oficial', how='inner')
+
+    # Aplica filtro global (apenas deputados que estão no df_filtrado)
+    ids_no_filtro = df_filtrado['id_oficial'].unique()
+    df_inf_filtrado = df_inf_completo[df_inf_completo['id_oficial'].isin(ids_no_filtro)].copy()
+
+    if df_inf_filtrado.empty:
+        st.info("Sem dados de proposições/votações para calcular influência com os filtros atuais.")
+    else:
+        tab_p8_taxa, tab_p8_abs, tab_p8_scatter = st.tabs([
+            "🎯 Taxa de Aprovação (%)", "📌 Nº Absoluto de Aprovações", "🔵 Visão Geral (Scatter)"
+        ])
+
+        col_n_p8, _ = st.columns([0.3, 0.7])
+        with col_n_p8:
+            n_p8 = st.slider("Quantos deputados exibir no ranking?", 5, 50, 20, key='sl_p8')
+
+        with tab_p8_taxa:
+            st.subheader("Deputados com maior taxa de aprovação das proposições assinadas")
+            st.caption("Mínimo de 3 proposições assinadas para entrar no ranking (evita distorção com quem só assinou 1).")
+
+            df_p8_taxa = df_inf_filtrado[df_inf_filtrado['total_proposicoes'] >= 3].sort_values('taxa_aprovacao', ascending=False).head(n_p8)
+
+            if df_p8_taxa.empty:
+                st.info("Nenhum deputado com 3+ proposições no filtro atual.")
             else:
-                df_div_filtrada['label_curto'] = df_div_filtrada['tema_label'].str[:60] + '...'
-
-                fig_div = px.bar(
-                    df_div_filtrada,
-                    x='coesao_media', y='label_curto',
+                fig_p8_t = px.bar(
+                    df_p8_taxa,
+                    x='taxa_aprovacao', y='txNomeParlamentar',
                     orientation='h',
-                    color='coesao_media', color_continuous_scale='RdYlGn',
-                    labels={'coesao_media': 'Coesão Média dos Partidos (%)', 'label_curto': 'Votação'},
+                    color='taxa_aprovacao', color_continuous_scale='Greens',
+                    labels={
+                        'taxa_aprovacao': 'Taxa de Aprovação (%)',
+                        'txNomeParlamentar': 'Deputado'
+                    },
+                    hover_data={'sgPartido': True, 'sgUF': True, 'total_proposicoes': True, 'proposicoes_aprovadas': True},
                     template=template_grafico,
                     text_auto='.1f'
                 )
-                fig_div.update_layout(yaxis={'categoryorder': 'total ascending'}, height=150 + (n_divididas * 35), coloraxis_colorbar_title='Coesão (%)')
-                st.plotly_chart(fig_div, width='stretch')
-
-                st.markdown("---")
-                st.markdown("**Ver detalhes de uma dessas votações:**")
-                mapa_div = dict(zip(df_div_filtrada['label_curto'], df_div_filtrada['id_votacao_str']))
-                vot_div_sel_label = st.selectbox("Selecione a votação:", list(mapa_div.keys()), key='sb_divididas')
-                vot_div_sel_id = mapa_div[vot_div_sel_label]
-
-                df_det = df_votos_contagem[
-                    (df_votos_contagem['id_votacao_str'] == vot_div_sel_id) &
-                    (df_votos_contagem['sgPartido'].isin(partidos_no_filtro))
-                ].copy()
-
-                if not df_det.empty:
-                    fig_det = px.bar(
-                        df_det,
-                        x='sgPartido', y='perc', color='voto',
-                        color_discrete_map={'Sim': '#2ecc71', 'Não': '#e74c3c'},
-                        barmode='stack',
-                        labels={'perc': '% de Votos', 'sgPartido': 'Partido', 'voto': 'Voto'},
-                        template=template_grafico,
-                        text_auto='.0f'
-                    )
-                    fig_det.update_layout(yaxis_title='% de Votos', legend_title='Voto', xaxis={'categoryorder': 'total descending'})
-                    st.plotly_chart(fig_det, width='stretch')
-
-st.divider()
-
-# --- 8. P11 (BARRA DE ABAS - RANKING DE PARTIDOS) ---
-st.header("📊 P11 — Ranking de Partidos (Atividade e Gastos)")
-
-df_partidos_P11 = df_filtrado.groupby('sgPartido').agg({'vlrLiquido': 'sum'}).reset_index()
-df_partidos_P11['perc_frequencia'] = df_partidos_P11['sgPartido'].map(df_freq).fillna(0)
-
-df_prod_partido = pd.merge(df_autores, df_link_partido_filtrado, on='id_oficial', how='inner')
-contagem_prod_partido = df_prod_partido.groupby('sgPartido').size()
-df_partidos_P11['qtd_proposicoes'] = df_partidos_P11['sgPartido'].map(contagem_prod_partido).fillna(0)
-
-tab_a, tab_b, tab_c, tab_d = st.tabs(["a) Frequência (Sessões)", "b) Proposições", "c) Gastos Totais", "d) Nuvem de Temas"])
-
-with tab_a:
-    st.subheader("Média de Sessões Deliberativas Comparecidas por Deputado (por Partido)")
-    fig_a = px.bar(df_partidos_P11.sort_values('perc_frequencia', ascending=False), x='sgPartido', y='perc_frequencia', color='perc_frequencia', color_continuous_scale='Viridis', template=template_grafico, labels={'perc_frequencia': 'Média de Sessões Comparecidas'})
-    st.plotly_chart(fig_a, width='stretch')
-
-with tab_b:
-    st.subheader("Total de Proposições Legislativas por Partido")
-    fig_b = px.bar(df_partidos_P11.sort_values('qtd_proposicoes', ascending=False), x='sgPartido', y='qtd_proposicoes', color='qtd_proposicoes', color_continuous_scale='Greens', template=template_grafico, labels={'qtd_proposicoes': 'Número de Proposições'})
-    st.plotly_chart(fig_b, width='stretch')
-
-with tab_c:
-    st.subheader("Gasto Total Acumulado (Cota Parlamentar) por Partido")
-    fig_c = px.bar(df_partidos_P11.sort_values('vlrLiquido', ascending=False), x='sgPartido', y='vlrLiquido', color='vlrLiquido', color_continuous_scale='Reds', template=template_grafico, labels={'vlrLiquido': 'Total Gasto (R$)'})
-    st.plotly_chart(fig_c, width='stretch')
-
-with tab_d:
-    st.subheader("Nuvem de Temas mais Tratados pelo Partido")
-    partidos_nuvem = sorted(df_partidos_P11['sgPartido'].unique())
-    
-    if partidos_nuvem:
-        partido_n = st.selectbox("Selecione o Partido para gerar a Nuvem de Palavras:", partidos_nuvem, key='sb_nuvem')
-        ids_dep_partido = df_link_partido_filtrado[df_link_partido_filtrado['sgPartido'] == partido_n]['id_oficial'].astype(str).str.strip().unique()
-        
-        # Filtra as palavras chave dos deputados desse partido
-        palavras_partido = df_temas[df_temas['id_oficial'].isin(ids_dep_partido)]['palavras_chave'].dropna()
-        
-        if len(palavras_partido) > 0:
-            freq_partido = obter_frequencia_palavras_chave(palavras_partido)
-            
-            if not freq_partido.empty:
-                col_nuvem_p, col_tabela_p = st.columns([0.7, 0.3])
-                
-                with col_nuvem_p:
-                    wc = WordCloud(
-                        width=900, height=500, background_color='white', 
-                        colormap='tab10', max_words=80
-                    ).generate_from_frequencies(freq_partido.to_dict())
-                    
-                    fig_d, ax = plt.subplots(figsize=(12, 6))
-                    ax.imshow(wc, interpolation='bilinear')
-                    ax.axis('off')
-                    plt.tight_layout(pad=0)
-                    st.pyplot(fig_d)
-                    plt.close(fig_d)
-                
-                with col_tabela_p:
-                    df_freq_partido = pd.DataFrame({'Palavra-chave': freq_partido.index, 'Frequência': freq_partido.values})
-                    st.dataframe(df_freq_partido, hide_index=True, height=450, use_container_width=True)
-            else:
-                 st.warning("Não foi possível gerar a nuvem para este partido (palavras insuficientes).")
-        else:
-            st.warning("Nenhuma palavra-chave disponível nas proposições deste partido.")
-    else:
-        st.info("Nenhum partido disponível para gerar nuvem com os filtros atuais.")
-st.divider()
-
-# --- 9. P13 (TIPOS DE DESPESA) ---
-st.header("📑 P13 — Tipos de Despesa (Cota Parlamentar)")
-col_vazia_l, col_conteudo_p13, col_vazia_r = st.columns([0.15, 0.7, 0.15])
-
-with col_conteudo_p13:
-    tab_global, tab_individual = st.tabs(["🌎 Visão Geral (Todos no Filtro)", "👤 Visão por Deputado"])
-    
-    with tab_global:
-        cat_data = df_filtrado.groupby('txtDescricao')['vlrLiquido'].sum().reset_index()
-        if not cat_data.empty:
-            fig_global = px.pie(cat_data, values='vlrLiquido', names='txtDescricao', hole=0.4, template=template_grafico, title="Distribuição de Gastos por Categoria")
-            fig_global.update_layout(showlegend=True) 
-            st.plotly_chart(fig_global, width='stretch')
-        else:
-            st.info("Nenhum dado de despesa encontrado para os filtros atuais.")
-
-    with tab_individual:
-        lista_nomes_P13 = sorted(df_filtrado['txNomeParlamentar'].dropna().unique())
-        if len(lista_nomes_P13) > 0:
-            dep_escolhido = st.selectbox("Selecione um deputado para análise individual de gastos:", lista_nomes_P13, key='sb_dep_p13')
-            df_ind = df_filtrado[df_filtrado['txNomeParlamentar'] == dep_escolhido]
-            cat_ind = df_ind.groupby('txtDescricao')['vlrLiquido'].sum().reset_index()
-            
-            if not cat_ind.empty:
-                st.info(f"Total gasto acumulado (2023-2026) por {dep_escolhido}: **R$ {df_ind['vlrLiquido'].sum():,.2f}**")
-                fig_ind = px.pie(cat_ind, values='vlrLiquido', names='txtDescricao', hole=0.4, color_discrete_sequence=px.colors.qualitative.Safe, title=f"Distribuição de Gastos de {dep_escolhido}")
-                st.plotly_chart(fig_ind, width='stretch')
-            else:
-                 st.warning(f"O deputado {dep_escolhido} está no filtro, mas não possui registros de despesas.")
-        else:
-            st.warning("Nenhum deputado encontrado com os filtros atuais.")
-
-st.divider()
-
-# =============================================================================
-# --- 10. P6 — ESCOLARIDADE × (GASTOS / FIDELIDADE / PROPOSIÇÕES / PRESENÇA) ---
-# =============================================================================
-st.header("🎓 P6 — Escolaridade em Perspectiva")
-st.markdown(
-    "Correlação entre o nível de instrução do deputado e quatro dimensões da sua atuação: "
-    "gastos, fidelidade partidária, produção legislativa e presença."
-)
-
-# ------------------------------------------------------------------
-# BASE COMPARTILHADA: perfil por deputado (1 linha por deputado)
-# ------------------------------------------------------------------
-perfil_dep_esc = (
-    df_filtrado[['id_oficial', 'txNomeParlamentar', 'escolaridade', 'sgPartido', 'sgUF']]
-    .drop_duplicates(subset=['id_oficial'])
-)
-
-# Ordem pedagógica dos níveis de escolaridade — usada em todos os sub-gráficos
-ORDEM_ESC = [
-    'Ensino Fundamental Incompleto', 'Ensino Fundamental',
-    'Ensino Médio Incompleto', 'Ensino Médio',
-    'Superior Incompleto', 'Superior',
-    'Especialização', 'Mestrado', 'Doutorado', 'Não Informado'
-]
-niveis_presentes = [n for n in ORDEM_ESC if n in perfil_dep_esc['escolaridade'].unique()]
-niveis_extras = [
-    n for n in perfil_dep_esc['escolaridade'].dropna().unique()
-    if n not in ORDEM_ESC
-]
-ordem_final = niveis_presentes + niveis_extras
-
-def aplicar_ordem(df, col='escolaridade'):
-    df = df.copy()
-    df = df[df[col].notna()]   # <-- remove linhas com escolaridade nula
-    df[col] = pd.Categorical(df[col], categories=ordem_final, ordered=True)
-    return df.sort_values(col)
-
-def grafico_media_boxplot(df_ind, col_y, label_y, key_prefix, cor_escala='Blues'):
-    """Reutilizável: gera aba de média + aba de boxplot para qualquer métrica × escolaridade."""
-    tab_med, tab_box = st.tabs(["📊 Média por Nível", "📦 Distribuição (Boxplot)"])
-
-    media = (
-        df_ind.groupby('escolaridade')[col_y]
-        .agg(['mean', 'count'])
-        .reset_index()
-        .rename(columns={'mean': 'media', 'count': 'n'})
-    )
-    media = aplicar_ordem(media)
-
-    with tab_med:
-        fig_m = px.bar(
-            media, x='escolaridade', y='media',
-            color='media', color_continuous_scale=cor_escala,
-            text_auto=',.1f',
-            hover_data=['n'],
-            labels={'escolaridade': 'Escolaridade', 'media': label_y, 'n': 'Nº Deputados'},
-            template=template_grafico,
-        )
-        fig_m.update_layout(xaxis_tickangle=-30, coloraxis_showscale=False)
-        fig_m.update_traces(textposition='outside')
-        st.plotly_chart(fig_m, width='stretch')
-        st.caption("Passe o mouse sobre as barras para ver o número de deputados em cada nível.")
-
-    with tab_box:
-        df_box = aplicar_ordem(df_ind)
-        fig_b = px.box(
-            df_box, x='escolaridade', y=col_y,
-            color='escolaridade', points='outliers',
-            labels={'escolaridade': 'Escolaridade', col_y: label_y},
-            template=template_grafico,
-        )
-        fig_b.update_layout(xaxis_tickangle=-30, showlegend=False)
-        st.plotly_chart(fig_b, width='stretch')
-
-# ------------------------------------------------------------------
-# FUNÇÃO NOVA: presença individual por deputado (P6d)
-# ------------------------------------------------------------------
-@st.cache_data
-def carregar_presenca_individual():
-    conn = sqlite3.connect('banco.db')
-
-    # Sessões Deliberativas (plenário)
-    q_plenario = """
-    SELECT p.dep_id AS id_oficial, COUNT(p.evt_id) AS presencas_plenario
-    FROM PresencaDeputado p
-    JOIN Evento e ON p.evt_id = e.evt_id
-    WHERE e.evt_tipo = 'Sessão Deliberativa'
-    GROUP BY p.dep_id
-    """
-    df_pl = pd.read_sql_query(q_plenario, conn)
-    df_pl['id_oficial'] = df_pl['id_oficial'].astype(str).str.split('.').str[0]
-
-    # Todos os eventos (qualquer tipo)
-    q_todos = """
-    SELECT dep_id AS id_oficial, COUNT(evt_id) AS presencas_total
-    FROM PresencaDeputado
-    GROUP BY dep_id
-    """
-    df_todos = pd.read_sql_query(q_todos, conn)
-    df_todos['id_oficial'] = df_todos['id_oficial'].astype(str).str.split('.').str[0]
-
-    conn.close()
-
-    df_pres_ind = pd.merge(df_todos, df_pl, on='id_oficial', how='left')
-    df_pres_ind['presencas_plenario'] = df_pres_ind['presencas_plenario'].fillna(0).astype(int)
-    # Taxa: % das presenças totais que foram em plenário
-    df_pres_ind['taxa_plenario'] = (
-        df_pres_ind['presencas_plenario'] / df_pres_ind['presencas_total'] * 100
-    ).round(1)
-    return df_pres_ind
-
-df_pres_individual = carregar_presenca_individual()
-
-# ------------------------------------------------------------------
-# ABAS PRINCIPAIS DE P6
-# ------------------------------------------------------------------
-tab_p6a, tab_p6b, tab_p6c, tab_p6d = st.tabs([
-    "💰 a) Gastos",
-    "🤝 b) Fidelidade Partidária",
-    "📜 c) Proposições",
-    "📅 d) Presença",
-])
-
-# ── P6a: Escolaridade × Gastos ─────────────────────────────────────
-with tab_p6a:
-    st.subheader("Escolaridade × Gasto médio da cota parlamentar")
-
-    gastos_por_dep = (
-        df_filtrado.groupby('id_oficial')['vlrLiquido']
-        .sum().reset_index()
-        .rename(columns={'vlrLiquido': 'total_gasto'})
-    )
-    df_esc_gastos = pd.merge(perfil_dep_esc, gastos_por_dep, on='id_oficial', how='inner')
-
-    if df_esc_gastos.empty:
-        st.info("Sem dados suficientes.")
-    else:
-        grafico_media_boxplot(df_esc_gastos, 'total_gasto', 'Gasto Médio (R$)', 'p6a', 'Blues')
-
-        with st.expander("📋 Ver tabela detalhada"):
-            df_tab = df_esc_gastos[['txNomeParlamentar','sgPartido','sgUF','escolaridade','total_gasto']].copy()
-            df_tab = df_tab.sort_values('total_gasto', ascending=False).reset_index(drop=True)
-            df_tab.columns = ['Deputado','Partido','UF','Escolaridade','Gasto Total (R$)']
-            df_tab['Gasto Total (R$)'] = df_tab['Gasto Total (R$)'].map('R$ {:,.2f}'.format)
-            esc_sel_a = st.multiselect("Filtrar escolaridade:", ordem_final, default=[], key='esc_tab_a')
-            df_exib_a = df_tab if not esc_sel_a else df_tab[df_tab['Escolaridade'].isin(esc_sel_a)]
-            st.dataframe(df_exib_a, hide_index=True, use_container_width=True, height=380)
-
-# ── P6b: Escolaridade × Fidelidade Partidária ──────────────────────
-with tab_p6b:
-    st.subheader("Escolaridade × Fidelidade à bancada")
-    st.caption(
-        "Fidelidade = % de votações em que o deputado votou com a maioria do seu partido. "
-        "Calculada individualmente a partir dos dados de alinhamento por partido (P10)."
-    )
-
-    # df_alinhamento está por partido; precisamos descer para o nível do deputado.
-    # Usamos df_votos_contagem que já tem sgPartido + id_votacao_str.
-    # A fidelidade individual exige recalcular — fazemos isso aqui com cache.
-
-    fidelidade_dep = calcular_fidelidade_individual()
-
-    ids_no_filtro_p6 = df_filtrado['id_oficial'].unique()
-    df_esc_fid = pd.merge(perfil_dep_esc, fidelidade_dep, on='id_oficial', how='inner')
-    df_esc_fid = df_esc_fid[df_esc_fid['id_oficial'].isin(ids_no_filtro_p6)]
-    
-
-    # Filtra apenas deputados no filtro global
-    ids_no_filtro_p6 = df_filtrado['id_oficial'].unique()
-    df_esc_fid = pd.merge(perfil_dep_esc, fidelidade_dep, on='id_oficial', how='inner')
-    df_esc_fid = df_esc_fid[df_esc_fid['id_oficial'].isin(ids_no_filtro_p6)]
-
-    if df_esc_fid.empty:
-        st.info("Sem dados de votações suficientes para calcular fidelidade individual.")
-    else:
-        grafico_media_boxplot(df_esc_fid, 'fidelidade', 'Fidelidade Média (%)', 'p6b', 'Purples')
-
-        with st.expander("📋 Ver tabela detalhada"):
-            df_tab_b = df_esc_fid[['txNomeParlamentar','sgPartido','sgUF','escolaridade','fidelidade']].copy()
-            df_tab_b = df_tab_b.sort_values('fidelidade', ascending=False).reset_index(drop=True)
-            df_tab_b.columns = ['Deputado','Partido','UF','Escolaridade','Fidelidade (%)']
-            esc_sel_b = st.multiselect("Filtrar escolaridade:", ordem_final, default=[], key='esc_tab_b')
-            df_exib_b = df_tab_b if not esc_sel_b else df_tab_b[df_tab_b['Escolaridade'].isin(esc_sel_b)]
-            st.dataframe(df_exib_b, hide_index=True, use_container_width=True, height=380)
-
-# ── P6c: Escolaridade × Nº de Proposições ─────────────────────────
-with tab_p6c:
-    st.subheader("Escolaridade × Número de proposições assinadas")
-
-    # df_autores: id_oficial + idProposicao_link (já carregado globalmente)
-    props_por_dep = (
-        df_autores.groupby('id_oficial')['idProposicao_link']
-        .count().reset_index(name='n_proposicoes')
-    )
-    df_esc_prop = pd.merge(perfil_dep_esc, props_por_dep, on='id_oficial', how='left')
-    df_esc_prop['n_proposicoes'] = df_esc_prop['n_proposicoes'].fillna(0).astype(int)
-    df_esc_prop = df_esc_prop[df_esc_prop['id_oficial'].isin(ids_no_filtro_p6)]
-
-    if df_esc_prop.empty:
-        st.info("Sem dados de proposições para o filtro atual.")
-    else:
-        grafico_media_boxplot(df_esc_prop, 'n_proposicoes', 'Média de Proposições Assinadas', 'p6c', 'Greens')
-
-        with st.expander("📋 Ver tabela detalhada"):
-            df_tab_c = df_esc_prop[['txNomeParlamentar','sgPartido','sgUF','escolaridade','n_proposicoes']].copy()
-            df_tab_c = df_tab_c.sort_values('n_proposicoes', ascending=False).reset_index(drop=True)
-            df_tab_c.columns = ['Deputado','Partido','UF','Escolaridade','Nº Proposições']
-            esc_sel_c = st.multiselect("Filtrar escolaridade:", ordem_final, default=[], key='esc_tab_c')
-            df_exib_c = df_tab_c if not esc_sel_c else df_tab_c[df_tab_c['Escolaridade'].isin(esc_sel_c)]
-            st.dataframe(df_exib_c, hide_index=True, use_container_width=True, height=380)
-
-# ── P6d: Escolaridade × Presença ───────────────────────────────────
-with tab_p6d:
-    st.subheader("Escolaridade × Presença em eventos e no plenário")
-    st.caption(
-        "**Presença total** = todos os eventos registrados no sistema (comissões, audiências, etc.). "
-        "**Plenário** = apenas Sessões Deliberativas. "
-        "**Taxa plenário** = % das presenças totais que foram em sessões deliberativas."
-    )
-
-    df_esc_pres = pd.merge(perfil_dep_esc, df_pres_individual, on='id_oficial', how='left')
-    df_esc_pres['presencas_total']   = df_esc_pres['presencas_total'].fillna(0).astype(int)
-    df_esc_pres['presencas_plenario'] = df_esc_pres['presencas_plenario'].fillna(0).astype(int)
-    df_esc_pres['taxa_plenario']     = df_esc_pres['taxa_plenario'].fillna(0)
-    df_esc_pres = df_esc_pres[df_esc_pres['id_oficial'].isin(ids_no_filtro_p6)]
-
-    if df_esc_pres.empty:
-        st.info("Sem dados de presença para o filtro atual.")
-    else:
-        metrica_p6d = st.radio(
-            "Qual métrica analisar?",
-            ["Presença total (todos eventos)", "Presença no plenário (deliberativas)", "Taxa plenário (%)"],
-            horizontal=True,
-            key='radio_p6d'
-        )
-
-        col_map = {
-            "Presença total (todos eventos)":          ('presencas_total',    'Média de Presenças Totais',        'Oranges'),
-            "Presença no plenário (deliberativas)":    ('presencas_plenario', 'Média de Presenças no Plenário',   'Reds'),
-            "Taxa plenário (%)":                       ('taxa_plenario',      'Taxa Média Plenário (%)',           'YlOrRd'),
-        }
-        col_y_d, label_y_d, cor_d = col_map[metrica_p6d]
-
-        grafico_media_boxplot(df_esc_pres, col_y_d, label_y_d, 'p6d', cor_d)
-
-        with st.expander("📋 Ver tabela detalhada"):
-            df_tab_d = df_esc_pres[[
-                'txNomeParlamentar','sgPartido','sgUF','escolaridade',
-                'presencas_total','presencas_plenario','taxa_plenario'
-            ]].copy().sort_values('presencas_total', ascending=False).reset_index(drop=True)
-            df_tab_d.columns = ['Deputado','Partido','UF','Escolaridade',
-                                 'Presenças Totais','Presenças Plenário','Taxa Plenário (%)']
-            esc_sel_d = st.multiselect("Filtrar escolaridade:", ordem_final, default=[], key='esc_tab_d')
-            df_exib_d = df_tab_d if not esc_sel_d else df_tab_d[df_tab_d['Escolaridade'].isin(esc_sel_d)]
-            st.dataframe(df_exib_d, hide_index=True, use_container_width=True, height=380)
-
-st.divider()
-
-# =============================================================================
-# --- 11. P8 — INFLUÊNCIA: % DE PROPOSTAS APROVADAS POR DEPUTADO ---
-# =============================================================================
-st.header("🏆 P8 — Influência Legislativa: Propostas Aprovadas")
-st.markdown(
-    "Mede a **efetividade legislativa** de cada deputado: qual percentual das proposições "
-    "que ele assinou foi aprovada, e qual sua participação no total de aprovações do período."
-)
-
-
-
-
-df_influencia = calcular_influencia_p8()
-
-# Junta com nome/partido/UF/escolaridade do df_principal
-perfil_deps = df_principal[['id_oficial', 'txNomeParlamentar', 'sgPartido', 'sgUF']].drop_duplicates(subset=['id_oficial'])
-df_inf_completo = pd.merge(df_influencia, perfil_deps, on='id_oficial', how='inner')
-
-# Aplica filtro global (apenas deputados que estão no df_filtrado)
-ids_no_filtro = df_filtrado['id_oficial'].unique()
-df_inf_filtrado = df_inf_completo[df_inf_completo['id_oficial'].isin(ids_no_filtro)].copy()
-
-if df_inf_filtrado.empty:
-    st.info("Sem dados de proposições/votações para calcular influência com os filtros atuais.")
-else:
-    tab_p8_taxa, tab_p8_abs, tab_p8_scatter = st.tabs([
-        "🎯 Taxa de Aprovação (%)", "📌 Nº Absoluto de Aprovações", "🔵 Visão Geral (Scatter)"
-    ])
-
-    col_n_p8, _ = st.columns([0.3, 0.7])
-    with col_n_p8:
-        n_p8 = st.slider("Quantos deputados exibir no ranking?", 5, 50, 20, key='sl_p8')
-
-    with tab_p8_taxa:
-        st.subheader("Deputados com maior taxa de aprovação das proposições assinadas")
-        st.caption("Mínimo de 3 proposições assinadas para entrar no ranking (evita distorção com quem só assinou 1).")
-
-        df_p8_taxa = df_inf_filtrado[df_inf_filtrado['total_proposicoes'] >= 3].sort_values('taxa_aprovacao', ascending=False).head(n_p8)
-
-        if df_p8_taxa.empty:
-            st.info("Nenhum deputado com 3+ proposições no filtro atual.")
-        else:
-            fig_p8_t = px.bar(
-                df_p8_taxa,
-                x='taxa_aprovacao', y='txNomeParlamentar',
+                fig_p8_t.update_layout(
+                    yaxis={'categoryorder': 'total ascending'},
+                    coloraxis_showscale=False
+                )
+                st.plotly_chart(fig_p8_t, width='stretch')
+
+        with tab_p8_abs:
+            st.subheader("Deputados com maior número absoluto de proposições aprovadas")
+            st.caption("Deputados que mais contribuíram com o volume total de aprovações no período.")
+
+            df_p8_abs = df_inf_filtrado.sort_values('proposicoes_aprovadas', ascending=False).head(n_p8)
+
+            fig_p8_a = px.bar(
+                df_p8_abs,
+                x='proposicoes_aprovadas', y='txNomeParlamentar',
                 orientation='h',
-                color='taxa_aprovacao', color_continuous_scale='Greens',
+                color='perc_do_total_aprov', color_continuous_scale='Teal',
                 labels={
-                    'taxa_aprovacao': 'Taxa de Aprovação (%)',
-                    'txNomeParlamentar': 'Deputado'
+                    'proposicoes_aprovadas': 'Proposições Aprovadas',
+                    'txNomeParlamentar': 'Deputado',
+                    'perc_do_total_aprov': '% do Total de Aprovações'
                 },
-                hover_data={'sgPartido': True, 'sgUF': True, 'total_proposicoes': True, 'proposicoes_aprovadas': True},
+                hover_data={'sgPartido': True, 'sgUF': True, 'taxa_aprovacao': True, 'perc_do_total_aprov': True},
+                template=template_grafico,
+                text_auto=True
+            )
+            fig_p8_a.update_layout(
+                yaxis={'categoryorder': 'total ascending'},
+                coloraxis_colorbar_title='% do Total'
+            )
+            st.plotly_chart(fig_p8_a, width='stretch')
+
+        with tab_p8_scatter:
+            st.subheader("Volume de proposições assinadas × taxa de aprovação")
+            st.caption("Cada ponto é um deputado. Tamanho do ponto = número de aprovações absolutas.")
+
+            fig_p8_s = px.scatter(
+                df_inf_filtrado[df_inf_filtrado['total_proposicoes'] >= 3],
+                x='total_proposicoes',
+                y='taxa_aprovacao',
+                size='proposicoes_aprovadas',
+                color='sgPartido',
+                hover_name='txNomeParlamentar',
+                hover_data={'sgUF': True, 'proposicoes_aprovadas': True, 'perc_do_total_aprov': True},
+                labels={
+                    'total_proposicoes': 'Total de Proposições Assinadas',
+                    'taxa_aprovacao': 'Taxa de Aprovação (%)',
+                    'sgPartido': 'Partido'
+                },
+                template=template_grafico,
+                size_max=30,
+            )
+            fig_p8_s.update_layout(legend_title='Partido')
+            st.plotly_chart(fig_p8_s, width='stretch')
+            st.caption(
+                "Deputados no canto superior direito assinam muitas proposições E têm alta taxa de aprovação "
+                "— são os mais influentes legislativamente."
+            )
+
+    st.divider()
+
+def renderizar_p10():
+    # --- 7. P10 (🤝 ALINHAMENTO INTERNO DOS PARTIDOS) ---
+    st.header("🤝 P10 — Alinhamento Interno dos Partidos (Fidelidade à Bancada)")
+
+    partidos_no_filtro = df_filtrado['sgPartido'].unique()
+    df_alinhamento_filtrado = df_alinhamento[df_alinhamento['sgPartido'].isin(partidos_no_filtro)].copy()
+
+    if df_alinhamento_filtrado.empty:
+        st.warning("⚠️ Dados de votações insuficientes para os partidos selecionados ou não contêm votos 'Sim'/'Não'. Impossível calcular o alinhamento interno (P10) no momento.")
+    else:
+        tab_p10_geral, tab_p10_busca, tab_p10_divididas = st.tabs([
+            "📊 Alinhamento Geral",
+            "🔍 Buscar Votação",
+            "⚡ Mais Divididas"
+        ])
+
+        with tab_p10_geral:
+            st.markdown("Porcentagem média de vezes que os deputados de cada partido votaram junto com a maioria da sua própria bancada (em votações Sim/Não).")
+            df_alinhamento_filtrado.sort_values(by='perc_alinhamento', ascending=False, inplace=True)
+            fig_p10 = px.bar(
+                df_alinhamento_filtrado,
+                x='sgPartido', y='perc_alinhamento',
+                color='perc_alinhamento', color_continuous_scale='Cividis',
+                labels={'perc_alinhamento': 'Alinhamento Médio (%)', 'sgPartido': 'Partido'},
                 template=template_grafico,
                 text_auto='.1f'
             )
-            fig_p8_t.update_layout(
-                yaxis={'categoryorder': 'total ascending'},
-                coloraxis_showscale=False
-            )
-            st.plotly_chart(fig_p8_t, width='stretch')
+            fig_p10.update_layout(xaxis={'categoryorder': 'total descending'})
+            st.plotly_chart(fig_p10, width='stretch')
 
-    with tab_p8_abs:
-        st.subheader("Deputados com maior número absoluto de proposições aprovadas")
-        st.caption("Deputados que mais contribuíram com o volume total de aprovações no período.")
+        with tab_p10_busca:
+            st.markdown("Busque pelo tema ou descrição de uma votação e veja como cada partido votou.")
 
-        df_p8_abs = df_inf_filtrado.sort_values('proposicoes_aprovadas', ascending=False).head(n_p8)
+            if df_votos_contagem.empty:
+                st.info("Dados de votações não disponíveis para a busca.")
+            else:
+                busca_tema = st.text_input("🔎 Buscar votação por tema/descrição:", placeholder="Ex: reforma, imposto, educação...")
+                df_contagem_filtrada = df_votos_contagem[df_votos_contagem['sgPartido'].isin(partidos_no_filtro)].copy()
+                opcoes_votacao = df_contagem_filtrada[['id_votacao_str', 'tema_label']].drop_duplicates(subset='id_votacao_str')
 
-        fig_p8_a = px.bar(
-            df_p8_abs,
-            x='proposicoes_aprovadas', y='txNomeParlamentar',
-            orientation='h',
-            color='perc_do_total_aprov', color_continuous_scale='Teal',
-            labels={
-                'proposicoes_aprovadas': 'Proposições Aprovadas',
-                'txNomeParlamentar': 'Deputado',
-                'perc_do_total_aprov': '% do Total de Aprovações'
-            },
-            hover_data={'sgPartido': True, 'sgUF': True, 'taxa_aprovacao': True, 'perc_do_total_aprov': True},
-            template=template_grafico,
-            text_auto=True
-        )
-        fig_p8_a.update_layout(
-            yaxis={'categoryorder': 'total ascending'},
-            coloraxis_colorbar_title='% do Total'
-        )
-        st.plotly_chart(fig_p8_a, width='stretch')
+                if busca_tema:
+                    mask_busca = opcoes_votacao['tema_label'].str.contains(busca_tema, case=False, na=False)
+                    opcoes_votacao = opcoes_votacao[mask_busca]
 
-    with tab_p8_scatter:
-        st.subheader("Volume de proposições assinadas × taxa de aprovação")
-        st.caption("Cada ponto é um deputado. Tamanho do ponto = número de aprovações absolutas.")
+                if opcoes_votacao.empty:
+                    st.warning("Nenhuma votação encontrada para esse termo.")
+                else:
+                    opcoes_votacao = opcoes_votacao.copy()
+                    opcoes_votacao['label_curto'] = opcoes_votacao['tema_label'].str[:120]
+                    mapa_label_id = dict(zip(opcoes_votacao['label_curto'], opcoes_votacao['id_votacao_str']))
 
-        fig_p8_s = px.scatter(
-            df_inf_filtrado[df_inf_filtrado['total_proposicoes'] >= 3],
-            x='total_proposicoes',
-            y='taxa_aprovacao',
-            size='proposicoes_aprovadas',
-            color='sgPartido',
-            hover_name='txNomeParlamentar',
-            hover_data={'sgUF': True, 'proposicoes_aprovadas': True, 'perc_do_total_aprov': True},
-            labels={
-                'total_proposicoes': 'Total de Proposições Assinadas',
-                'taxa_aprovacao': 'Taxa de Aprovação (%)',
-                'sgPartido': 'Partido'
-            },
-            template=template_grafico,
-            size_max=30,
-        )
-        fig_p8_s.update_layout(legend_title='Partido')
-        st.plotly_chart(fig_p8_s, width='stretch')
-        st.caption(
-            "Deputados no canto superior direito assinam muitas proposições E têm alta taxa de aprovação "
-            "— são os mais influentes legislativamente."
-        )
+                    votacao_escolhida_label = st.selectbox(
+                        f"{len(opcoes_votacao)} votação(ões) encontrada(s) — selecione uma:",
+                        options=list(mapa_label_id.keys())
+                    )
+                    votacao_escolhida_id = mapa_label_id[votacao_escolhida_label]
+                    df_vot_sel = df_contagem_filtrada[df_contagem_filtrada['id_votacao_str'] == votacao_escolhida_id].copy()
 
-st.divider()
+                    if not df_vot_sel.empty:
+                        fig_busca = px.bar(
+                            df_vot_sel,
+                            x='sgPartido', y='perc', color='voto',
+                            color_discrete_map={'Sim': '#2ecc71', 'Não': '#e74c3c'},
+                            barmode='stack',
+                            labels={'perc': '% de Votos', 'sgPartido': 'Partido', 'voto': 'Voto'},
+                            template=template_grafico,
+                            text_auto='.0f'
+                        )
+                        fig_busca.update_layout(yaxis_title='% de Votos', legend_title='Voto', xaxis={'categoryorder': 'total descending'})
+                        st.plotly_chart(fig_busca, width='stretch')
 
-# =============================================================================
-# --- 12. P12 — DEPUTADO × FORNECEDOR ---
-# =============================================================================
-st.header("🏢 P12 — Deputado × Fornecedor")
-st.markdown(
-    "Analisa com quais fornecedores cada deputado mais gastou a cota parlamentar, "
-    "e quais fornecedores mais recebem recursos parlamentares no geral."
-)
+                        resumo = df_vot_sel.loc[df_vot_sel.groupby('sgPartido')['perc'].idxmax()][['sgPartido', 'voto', 'perc']].copy()
+                        resumo.columns = ['Partido', 'Voto Majoritário', '% Maioria']
+                        resumo['% Maioria'] = resumo['% Maioria'].round(1)
+                        resumo.sort_values('Partido', inplace=True)
+                        st.markdown("**Voto majoritário por partido nessa votação:**")
+                        st.dataframe(resumo, width='stretch', hide_index=True)
 
-# df_filtrado já tem desp_fornecedor_nome — mas essa coluna vem do df_principal
-# que não a inclui. Precisamos buscá-la direto do banco com os IDs do filtro.
+        with tab_p10_divididas:
+            st.markdown("Votações onde os partidos tiveram **menor coesão interna** — mais deputados do mesmo partido votando de formas diferentes.")
 
+            if df_divisao.empty:
+                st.info("Dados de divisão não disponíveis.")
+            else:
+                col_n, _ = st.columns([0.3, 0.7])
+                with col_n:
+                    n_divididas = st.slider("Quantas votações exibir?", 5, 30, 10)
 
-df_fornecedores = carregar_fornecedores()
+                ids_com_dados = df_votos_contagem[df_votos_contagem['sgPartido'].isin(partidos_no_filtro)]['id_votacao_str'].unique()
+                df_div_filtrada = df_divisao[df_divisao['id_votacao_str'].isin(ids_com_dados)].head(n_divididas).copy()
 
-# Aplica filtro global
-df_forn_filtrado = df_fornecedores[df_fornecedores['id_oficial'].isin(ids_no_filtro)].copy()
+                if df_div_filtrada.empty:
+                    st.warning("Nenhuma votação encontrada para os partidos selecionados.")
+                else:
+                    df_div_filtrada['label_curto'] = df_div_filtrada['tema_label'].str[:60] + '...'
 
-if df_forn_filtrado.empty:
-    st.info("Sem dados de fornecedores para os filtros atuais.")
-else:
-    tab_p12_geral, tab_p12_dep, tab_p12_forn = st.tabs([
-        "🌎 Top Fornecedores Geral", "👤 Por Deputado", "🔍 Por Fornecedor"
-    ])
+                    fig_div = px.bar(
+                        df_div_filtrada,
+                        x='coesao_media', y='label_curto',
+                        orientation='h',
+                        color='coesao_media', color_continuous_scale='RdYlGn',
+                        labels={'coesao_media': 'Coesão Média dos Partidos (%)', 'label_curto': 'Votação'},
+                        template=template_grafico,
+                        text_auto='.1f'
+                    )
+                    fig_div.update_layout(yaxis={'categoryorder': 'total ascending'}, height=150 + (n_divididas * 35), coloraxis_colorbar_title='Coesão (%)')
+                    st.plotly_chart(fig_div, width='stretch')
 
-    with tab_p12_geral:
-        st.subheader("Fornecedores que mais receberam recursos parlamentares")
+                    st.markdown("---")
+                    st.markdown("**Ver detalhes de uma dessas votações:**")
+                    mapa_div = dict(zip(df_div_filtrada['label_curto'], df_div_filtrada['id_votacao_str']))
+                    vot_div_sel_label = st.selectbox("Selecione a votação:", list(mapa_div.keys()), key='sb_divididas')
+                    vot_div_sel_id = mapa_div[vot_div_sel_label]
 
-        col_n12, _ = st.columns([0.3, 0.7])
-        with col_n12:
-            n_forn = st.slider("Quantos fornecedores exibir?", 5, 50, 20, key='sl_forn_geral')
+                    df_det = df_votos_contagem[
+                        (df_votos_contagem['id_votacao_str'] == vot_div_sel_id) &
+                        (df_votos_contagem['sgPartido'].isin(partidos_no_filtro))
+                    ].copy()
 
-        top_forn = (
-            df_forn_filtrado
-            .groupby('fornecedor')
-            .agg(
-                total_recebido=('vlrLiquido', 'sum'),
-                n_deputados=('id_oficial', 'nunique'),
-                n_transacoes=('vlrLiquido', 'count')
-            )
-            .reset_index()
-            .sort_values('total_recebido', ascending=False)
-            .head(n_forn)
-        )
+                    if not df_det.empty:
+                        fig_det = px.bar(
+                            df_det,
+                            x='sgPartido', y='perc', color='voto',
+                            color_discrete_map={'Sim': '#2ecc71', 'Não': '#e74c3c'},
+                            barmode='stack',
+                            labels={'perc': '% de Votos', 'sgPartido': 'Partido', 'voto': 'Voto'},
+                            template=template_grafico,
+                            text_auto='.0f'
+                        )
+                        fig_det.update_layout(yaxis_title='% de Votos', legend_title='Voto', xaxis={'categoryorder': 'total descending'})
+                        st.plotly_chart(fig_det, width='stretch')
 
-        fig_p12_g = px.bar(
-            top_forn,
-            x='total_recebido', y='fornecedor',
-            orientation='h',
-            color='total_recebido', color_continuous_scale='Oranges',
-            hover_data={'n_deputados': True, 'n_transacoes': True},
-            labels={
-                'total_recebido': 'Total Recebido (R$)',
-                'fornecedor': 'Fornecedor',
-                'n_deputados': 'Nº de Deputados Clientes',
-                'n_transacoes': 'Nº de Transações'
-            },
-            template=template_grafico,
-            text_auto=',.0f'
-        )
-        fig_p12_g.update_layout(
-            yaxis={'categoryorder': 'total ascending'},
-            coloraxis_showscale=False,
-            height=200 + (n_forn * 22)
-        )
-        st.plotly_chart(fig_p12_g, width='stretch')
+    st.divider()
 
-    with tab_p12_dep:
-        st.subheader("Com quais fornecedores um deputado mais gastou?")
+def renderizar_p11():
+    # --- 8. P11 (BARRA DE ABAS - RANKING DE PARTIDOS) ---
+    st.header("📊 P11 — Ranking de Partidos (Atividade e Gastos)")
 
-        lista_deps_p12 = sorted(df_forn_filtrado['txNomeParlamentar'].dropna().unique())
-        dep_p12 = st.selectbox("Selecione o deputado:", lista_deps_p12, key='sb_dep_p12')
+    df_partidos_P11 = df_filtrado.groupby('sgPartido').agg({'vlrLiquido': 'sum'}).reset_index()
+    df_partidos_P11['perc_frequencia'] = df_partidos_P11['sgPartido'].map(df_freq).fillna(0)
 
-        col_n12b, _ = st.columns([0.3, 0.7])
-        with col_n12b:
-            n_forn_dep = st.slider("Quantos fornecedores exibir?", 5, 30, 15, key='sl_forn_dep')
+    df_prod_partido = pd.merge(df_autores, df_link_partido_filtrado, on='id_oficial', how='inner')
+    contagem_prod_partido = df_prod_partido.groupby('sgPartido').size()
+    df_partidos_P11['qtd_proposicoes'] = df_partidos_P11['sgPartido'].map(contagem_prod_partido).fillna(0)
 
-        df_dep_selecionado = df_forn_filtrado[df_forn_filtrado['txNomeParlamentar'] == dep_p12]
+    tab_a, tab_b, tab_c, tab_d = st.tabs(["a) Frequência (Sessões)", "b) Proposições", "c) Gastos Totais", "d) Nuvem de Temas"])
 
-        forn_dep = (
-            df_dep_selecionado
-            .groupby(['fornecedor', 'categoria'])
-            .agg(total=('vlrLiquido', 'sum'), transacoes=('vlrLiquido', 'count'))
-            .reset_index()
-            .sort_values('total', ascending=False)
-            .head(n_forn_dep)
-        )
+    with tab_a:
+        st.subheader("Média de Sessões Deliberativas Comparecidas por Deputado (por Partido)")
+        fig_a = px.bar(df_partidos_P11.sort_values('perc_frequencia', ascending=False), x='sgPartido', y='perc_frequencia', color='perc_frequencia', color_continuous_scale='Viridis', template=template_grafico, labels={'perc_frequencia': 'Média de Sessões Comparecidas'})
+        st.plotly_chart(fig_a, width='stretch')
 
-        if forn_dep.empty:
-            st.info(f"Sem dados de fornecedores para {dep_p12}.")
+    with tab_b:
+        st.subheader("Total de Proposições Legislativas por Partido")
+        fig_b = px.bar(df_partidos_P11.sort_values('qtd_proposicoes', ascending=False), x='sgPartido', y='qtd_proposicoes', color='qtd_proposicoes', color_continuous_scale='Greens', template=template_grafico, labels={'qtd_proposicoes': 'Número de Proposições'})
+        st.plotly_chart(fig_b, width='stretch')
+
+    with tab_c:
+        st.subheader("Gasto Total Acumulado (Cota Parlamentar) por Partido")
+        fig_c = px.bar(df_partidos_P11.sort_values('vlrLiquido', ascending=False), x='sgPartido', y='vlrLiquido', color='vlrLiquido', color_continuous_scale='Reds', template=template_grafico, labels={'vlrLiquido': 'Total Gasto (R$)'})
+        st.plotly_chart(fig_c, width='stretch')
+
+    with tab_d:
+        st.subheader("Nuvem de Temas mais Tratados pelo Partido")
+        partidos_nuvem = sorted(df_partidos_P11['sgPartido'].unique())
+        
+        if partidos_nuvem:
+            partido_n = st.selectbox("Selecione o Partido para gerar a Nuvem de Palavras:", partidos_nuvem, key='sb_nuvem')
+            ids_dep_partido = df_link_partido_filtrado[df_link_partido_filtrado['sgPartido'] == partido_n]['id_oficial'].astype(str).str.strip().unique()
+            
+            # Filtra as palavras chave dos deputados desse partido
+            palavras_partido = df_temas[df_temas['id_oficial'].isin(ids_dep_partido)]['palavras_chave'].dropna()
+            
+            if len(palavras_partido) > 0:
+                freq_partido = obter_frequencia_palavras_chave(palavras_partido)
+                
+                if not freq_partido.empty:
+                    col_nuvem_p, col_tabela_p = st.columns([0.7, 0.3])
+                    
+                    with col_nuvem_p:
+                        wc = WordCloud(
+                            width=900, height=500, background_color='white', 
+                            colormap='tab10', max_words=80
+                        ).generate_from_frequencies(freq_partido.to_dict())
+                        
+                        fig_d, ax = plt.subplots(figsize=(12, 6))
+                        ax.imshow(wc, interpolation='bilinear')
+                        ax.axis('off')
+                        plt.tight_layout(pad=0)
+                        st.pyplot(fig_d)
+                        plt.close(fig_d)
+                    
+                    with col_tabela_p:
+                        df_freq_partido = pd.DataFrame({'Palavra-chave': freq_partido.index, 'Frequência': freq_partido.values})
+                        st.dataframe(df_freq_partido, hide_index=True, height=450, use_container_width=True)
+                else:
+                    st.warning("Não foi possível gerar a nuvem para este partido (palavras insuficientes).")
+            else:
+                st.warning("Nenhuma palavra-chave disponível nas proposições deste partido.")
         else:
-            total_dep = df_dep_selecionado['vlrLiquido'].sum()
-            st.info(f"Total gasto por **{dep_p12}**: R$ {total_dep:,.2f} | Top {n_forn_dep} fornecedores abaixo.")
+            st.info("Nenhum partido disponível para gerar nuvem com os filtros atuais.")
+    st.divider()
 
-            fig_p12_dep = px.bar(
-                forn_dep,
-                x='total', y='fornecedor',
+def renderizar_p12():
+    # =============================================================================
+    # --- 12. P12 — DEPUTADO × FORNECEDOR ---
+    # =============================================================================
+    st.header("🏢 P12 — Deputado × Fornecedor")
+    st.markdown(
+        "Analisa com quais fornecedores cada deputado mais gastou a cota parlamentar, "
+        "e quais fornecedores mais recebem recursos parlamentares no geral."
+    )
+
+    # df_filtrado já tem desp_fornecedor_nome — mas essa coluna vem do df_principal
+    # que não a inclui. Precisamos buscá-la direto do banco com os IDs do filtro.
+
+
+    df_fornecedores = carregar_fornecedores()
+    ids_no_filtro = df_filtrado['id_oficial'].unique()
+    
+    # Aplica filtro global
+    df_forn_filtrado = df_fornecedores[df_fornecedores['id_oficial'].isin(ids_no_filtro)].copy()
+
+    if df_forn_filtrado.empty:
+        st.info("Sem dados de fornecedores para os filtros atuais.")
+    else:
+        tab_p12_geral, tab_p12_dep, tab_p12_forn = st.tabs([
+            "🌎 Top Fornecedores Geral", "👤 Por Deputado", "🔍 Por Fornecedor"
+        ])
+
+        with tab_p12_geral:
+            st.subheader("Fornecedores que mais receberam recursos parlamentares")
+
+            col_n12, _ = st.columns([0.3, 0.7])
+            with col_n12:
+                n_forn = st.slider("Quantos fornecedores exibir?", 5, 50, 20, key='sl_forn_geral')
+
+            top_forn = (
+                df_forn_filtrado
+                .groupby('fornecedor')
+                .agg(
+                    total_recebido=('vlrLiquido', 'sum'),
+                    n_deputados=('id_oficial', 'nunique'),
+                    n_transacoes=('vlrLiquido', 'count')
+                )
+                .reset_index()
+                .sort_values('total_recebido', ascending=False)
+                .head(n_forn)
+            )
+
+            fig_p12_g = px.bar(
+                top_forn,
+                x='total_recebido', y='fornecedor',
                 orientation='h',
-                color='categoria',
-                hover_data={'transacoes': True, 'categoria': True},
+                color='total_recebido', color_continuous_scale='Oranges',
+                hover_data={'n_deputados': True, 'n_transacoes': True},
                 labels={
-                    'total': 'Total Gasto (R$)',
+                    'total_recebido': 'Total Recebido (R$)',
                     'fornecedor': 'Fornecedor',
-                    'categoria': 'Categoria de Despesa',
-                    'transacoes': 'Nº de Transações'
+                    'n_deputados': 'Nº de Deputados Clientes',
+                    'n_transacoes': 'Nº de Transações'
                 },
                 template=template_grafico,
                 text_auto=',.0f'
             )
-            fig_p12_dep.update_layout(
+            fig_p12_g.update_layout(
                 yaxis={'categoryorder': 'total ascending'},
-                legend_title='Categoria',
-                height=200 + (n_forn_dep * 28)
+                coloraxis_showscale=False,
+                height=200 + (n_forn * 22)
             )
-            st.plotly_chart(fig_p12_dep, width='stretch')
+            st.plotly_chart(fig_p12_g, width='stretch')
 
-            # Tabela detalhada
-            with st.expander("Ver tabela completa de fornecedores"):
-                df_tab_forn = forn_dep.copy()
-                df_tab_forn.columns = ['Fornecedor', 'Categoria', 'Total (R$)', 'Transações']
-                df_tab_forn['Total (R$)'] = df_tab_forn['Total (R$)'].map('R$ {:,.2f}'.format)
-                st.dataframe(df_tab_forn, hide_index=True, use_container_width=True)
+        with tab_p12_dep:
+            st.subheader("Com quais fornecedores um deputado mais gastou?")
 
-    with tab_p12_forn:
-        st.subheader("Quais deputados mais pagaram a um fornecedor específico?")
+            lista_deps_p12 = sorted(df_forn_filtrado['txNomeParlamentar'].dropna().unique())
+            dep_p12 = st.selectbox("Selecione o deputado:", lista_deps_p12, key='sb_dep_p12')
 
-        # Lista os top 500 fornecedores por volume para o select não ficar enorme
-        top500_forn = (
-            df_forn_filtrado
-            .groupby('fornecedor')['vlrLiquido']
-            .sum()
-            .sort_values(ascending=False)
-            .head(500)
-            .index.tolist()
-        )
+            col_n12b, _ = st.columns([0.3, 0.7])
+            with col_n12b:
+                n_forn_dep = st.slider("Quantos fornecedores exibir?", 5, 30, 15, key='sl_forn_dep')
 
-        forn_selecionado = st.selectbox(
-            "Selecione o fornecedor (top 500 por volume):",
-            top500_forn,
-            key='sb_forn_p12'
-        )
+            df_dep_selecionado = df_forn_filtrado[df_forn_filtrado['txNomeParlamentar'] == dep_p12]
 
-        col_n12c, _ = st.columns([0.3, 0.7])
-        with col_n12c:
-            n_deps_forn = st.slider("Quantos deputados exibir?", 5, 30, 15, key='sl_deps_forn')
-
-        df_forn_sel = df_forn_filtrado[df_forn_filtrado['fornecedor'] == forn_selecionado]
-
-        deps_do_forn = (
-            df_forn_sel
-            .groupby(['txNomeParlamentar', 'sgPartido', 'sgUF'])
-            .agg(total=('vlrLiquido', 'sum'), transacoes=('vlrLiquido', 'count'))
-            .reset_index()
-            .sort_values('total', ascending=False)
-            .head(n_deps_forn)
-        )
-
-        if deps_do_forn.empty:
-            st.info("Sem dados para o fornecedor selecionado.")
-        else:
-            total_forn = df_forn_sel['vlrLiquido'].sum()
-            n_deps_unique = df_forn_sel['id_oficial'].nunique()
-            st.info(
-                f"**{forn_selecionado}** recebeu **R$ {total_forn:,.2f}** "
-                f"de **{n_deps_unique}** deputado(s) diferentes."
+            forn_dep = (
+                df_dep_selecionado
+                .groupby(['fornecedor', 'categoria'])
+                .agg(total=('vlrLiquido', 'sum'), transacoes=('vlrLiquido', 'count'))
+                .reset_index()
+                .sort_values('total', ascending=False)
+                .head(n_forn_dep)
             )
 
-            fig_p12_forn = px.bar(
-                deps_do_forn,
-                x='total', y='txNomeParlamentar',
-                orientation='h',
-                color='sgPartido',
-                hover_data={'sgUF': True, 'transacoes': True},
-                labels={
-                    'total': 'Total Pago (R$)',
-                    'txNomeParlamentar': 'Deputado',
-                    'sgPartido': 'Partido',
-                    'transacoes': 'Nº de Transações'
-                },
-                template=template_grafico,
-                text_auto=',.0f'
+            if forn_dep.empty:
+                st.info(f"Sem dados de fornecedores para {dep_p12}.")
+            else:
+                total_dep = df_dep_selecionado['vlrLiquido'].sum()
+                st.info(f"Total gasto por **{dep_p12}**: R$ {total_dep:,.2f} | Top {n_forn_dep} fornecedores abaixo.")
+
+                fig_p12_dep = px.bar(
+                    forn_dep,
+                    x='total', y='fornecedor',
+                    orientation='h',
+                    color='categoria',
+                    hover_data={'transacoes': True, 'categoria': True},
+                    labels={
+                        'total': 'Total Gasto (R$)',
+                        'fornecedor': 'Fornecedor',
+                        'categoria': 'Categoria de Despesa',
+                        'transacoes': 'Nº de Transações'
+                    },
+                    template=template_grafico,
+                    text_auto=',.0f'
+                )
+                fig_p12_dep.update_layout(
+                    yaxis={'categoryorder': 'total ascending'},
+                    legend_title='Categoria',
+                    height=200 + (n_forn_dep * 28)
+                )
+                st.plotly_chart(fig_p12_dep, width='stretch')
+
+                # Tabela detalhada
+                with st.expander("Ver tabela completa de fornecedores"):
+                    df_tab_forn = forn_dep.copy()
+                    df_tab_forn.columns = ['Fornecedor', 'Categoria', 'Total (R$)', 'Transações']
+                    df_tab_forn['Total (R$)'] = df_tab_forn['Total (R$)'].map('R$ {:,.2f}'.format)
+                    st.dataframe(df_tab_forn, hide_index=True, use_container_width=True)
+
+        with tab_p12_forn:
+            st.subheader("Quais deputados mais pagaram a um fornecedor específico?")
+
+            # Lista os top 500 fornecedores por volume para o select não ficar enorme
+            top500_forn = (
+                df_forn_filtrado
+                .groupby('fornecedor')['vlrLiquido']
+                .sum()
+                .sort_values(ascending=False)
+                .head(500)
+                .index.tolist()
             )
-            fig_p12_forn.update_layout(
-                yaxis={'categoryorder': 'total ascending'},
-                legend_title='Partido',
-                height=200 + (n_deps_forn * 28)
+
+            forn_selecionado = st.selectbox(
+                "Selecione o fornecedor (top 500 por volume):",
+                top500_forn,
+                key='sb_forn_p12'
             )
-            st.plotly_chart(fig_p12_forn, width='stretch')
+
+            col_n12c, _ = st.columns([0.3, 0.7])
+            with col_n12c:
+                n_deps_forn = st.slider("Quantos deputados exibir?", 5, 30, 15, key='sl_deps_forn')
+
+            df_forn_sel = df_forn_filtrado[df_forn_filtrado['fornecedor'] == forn_selecionado]
+
+            deps_do_forn = (
+                df_forn_sel
+                .groupby(['txNomeParlamentar', 'sgPartido', 'sgUF'])
+                .agg(total=('vlrLiquido', 'sum'), transacoes=('vlrLiquido', 'count'))
+                .reset_index()
+                .sort_values('total', ascending=False)
+                .head(n_deps_forn)
+            )
+
+            if deps_do_forn.empty:
+                st.info("Sem dados para o fornecedor selecionado.")
+            else:
+                total_forn = df_forn_sel['vlrLiquido'].sum()
+                n_deps_unique = df_forn_sel['id_oficial'].nunique()
+                st.info(
+                    f"**{forn_selecionado}** recebeu **R$ {total_forn:,.2f}** "
+                    f"de **{n_deps_unique}** deputado(s) diferentes."
+                )
+
+                fig_p12_forn = px.bar(
+                    deps_do_forn,
+                    x='total', y='txNomeParlamentar',
+                    orientation='h',
+                    color='sgPartido',
+                    hover_data={'sgUF': True, 'transacoes': True},
+                    labels={
+                        'total': 'Total Pago (R$)',
+                        'txNomeParlamentar': 'Deputado',
+                        'sgPartido': 'Partido',
+                        'transacoes': 'Nº de Transações'
+                    },
+                    template=template_grafico,
+                    text_auto=',.0f'
+                )
+                fig_p12_forn.update_layout(
+                    yaxis={'categoryorder': 'total ascending'},
+                    legend_title='Partido',
+                    height=200 + (n_deps_forn * 28)
+                )
+                st.plotly_chart(fig_p12_forn, width='stretch')      
+
+def renderizar_p13():
+    # --- 9. P13 (TIPOS DE DESPESA) ---
+    st.header("📑 P13 — Tipos de Despesa (Cota Parlamentar)")
+    col_vazia_l, col_conteudo_p13, col_vazia_r = st.columns([0.15, 0.7, 0.15])
+
+    with col_conteudo_p13:
+        tab_global, tab_individual = st.tabs(["🌎 Visão Geral (Todos no Filtro)", "👤 Visão por Deputado"])
+        
+        with tab_global:
+            cat_data = df_filtrado.groupby('txtDescricao')['vlrLiquido'].sum().reset_index()
+            if not cat_data.empty:
+                fig_global = px.pie(cat_data, values='vlrLiquido', names='txtDescricao', hole=0.4, template=template_grafico, title="Distribuição de Gastos por Categoria")
+                fig_global.update_layout(showlegend=True) 
+                st.plotly_chart(fig_global, width='stretch')
+            else:
+                st.info("Nenhum dado de despesa encontrado para os filtros atuais.")
+
+        with tab_individual:
+            lista_nomes_P13 = sorted(df_filtrado['txNomeParlamentar'].dropna().unique())
+            if len(lista_nomes_P13) > 0:
+                dep_escolhido = st.selectbox("Selecione um deputado para análise individual de gastos:", lista_nomes_P13, key='sb_dep_p13')
+                df_ind = df_filtrado[df_filtrado['txNomeParlamentar'] == dep_escolhido]
+                cat_ind = df_ind.groupby('txtDescricao')['vlrLiquido'].sum().reset_index()
+                
+                if not cat_ind.empty:
+                    st.info(f"Total gasto acumulado (2023-2026) por {dep_escolhido}: **R$ {df_ind['vlrLiquido'].sum():,.2f}**")
+                    fig_ind = px.pie(cat_ind, values='vlrLiquido', names='txtDescricao', hole=0.4, color_discrete_sequence=px.colors.qualitative.Safe, title=f"Distribuição de Gastos de {dep_escolhido}")
+                    st.plotly_chart(fig_ind, width='stretch')
+                else:
+                    st.warning(f"O deputado {dep_escolhido} está no filtro, mas não possui registros de despesas.")
+            else:
+                st.warning("Nenhum deputado encontrado com os filtros atuais.")
+
+    st.divider()
+       
+
+# ==========================================
+# CSS PRA ESTILIZAR
+# ==========================================
+st.markdown("""
+    <style>
+        /* Força a barra de abas a ocupar 100% da largura da tela */
+        div[data-baseweb="tab-list"] {
+            display: flex !important;
+            width: 100% !important;
+        }
+        
+        /* Ajusta cada aba individualmente para crescer e centralizar */
+        button[data-baseweb="tab"] {
+            flex: 1 !important; 
+            justify-content: center !important; 
+        }
+        
+        /* ATACA DIRETAMENTE O TEXTO DENTRO DA ABA (Aumenta a fonte e deixa Bold) */
+        button[data-baseweb="tab"] p,
+        button[data-baseweb="tab"] span {
+            font-size: 20px !important; /* Aumentado um pouco mais */
+            font-weight: bold !important; /* Deixa BEM destacado */
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+# ==========================================
+# 🌟 NAVEGAÇÃO DO DASHBOARD
+# ==========================================
+st.subheader("Navegação do Dashboard")
+
+# 1. Cria as abas e guarda nas variáveis
+tab_gastos, tab_atuacao, tab_partidos, tab_perfil = st.tabs([
+    "💰 Gastos & Cota", 
+    "📜 Atuação Legislativa", 
+    "🏛️ Dinâmica Partidária", 
+    "🎓 Perfil Demográfico"
+])
+
+
+# 2. Preenche a Aba 1
+with tab_gastos:
+    renderizar_p1()
+    renderizar_p12()
+    renderizar_p13()
+
+# 3. Preenche a Aba 2
+with tab_atuacao:
+    renderizar_p2()
+    renderizar_p3()
+    renderizar_p8()
+
+# 4. Preenche a Aba 3
+with tab_partidos:
+    renderizar_p10()
+    renderizar_p11()
+
+# 5. Preenche a Aba 4
+with tab_perfil:
+    renderizar_p4()
+    renderizar_p6()
