@@ -423,10 +423,10 @@ def calcular_influencia_p8():
 
     # % em relação ao total de aprovações no período (influência relativa)
     total_aprov_periodo = resumo['proposicoes_aprovadas'].sum()
-    resumo['perc_do_total_aprov'] = (
-        resumo['proposicoes_aprovadas'] / total_aprov_periodo * 100
-        if total_aprov_periodo > 0 else 0
-    ).round(2)
+    if total_aprov_periodo > 0:
+        resumo['perc_do_total_aprov'] = (resumo['proposicoes_aprovadas'] / total_aprov_periodo * 100).round(2)
+    else:
+        resumo['perc_do_total_aprov'] = 0.0
 
     return resumo
 
