@@ -473,16 +473,36 @@ with st.spinner('Consultando os dados da 57ª Legislatura...'):
 
 # --- 3. FILTROS LATERAIS (GLOBAIS) ---
 st.sidebar.header("🔍 Filtros Globais")
-nome_busca = st.sidebar.text_input("Buscar por Nome do Deputado")
+
+# 1. Filtro de Nome
+nomes_disp = ["Todos"] + sorted(df_principal['txNomeParlamentar'].dropna().unique().tolist())
+nome_sel = st.sidebar.selectbox("Buscar por Nome do Deputado", nomes_disp)
+
+# 2. Lógica para exibir a foto do deputado selecionado
+if nome_sel != "Todos":
+    dep_selecionado_row = df_principal[df_principal['txNomeParlamentar'] == nome_sel].iloc[0]
+    id_dep = dep_selecionado_row['id_oficial']
+    
+    # URL da Câmara
+    url_foto = f"https://www.camara.leg.br/internet/deputado/bandep/{id_dep}.jpg"
+    
+    # Exibe a foto. Se o link não carregar, o Streamlit apenas deixa o espaço vazio 
+    # ou exibe um pequeno ícone padrão do navegador, sem quebrar o resto do layout.
+    st.sidebar.image(url_foto, width=160, caption=nome_sel)
+else:
+    # Se "Todos" estiver selecionado, simplesmente não exibe nada ou exibe um título
+    st.sidebar.markdown("---")
+    st.sidebar.write("Selecione um deputado para ver sua foto.")
+
+# 3. Restante dos filtros
 partidos_disp = sorted(df_principal['sgPartido'].dropna().unique())
 partido_sel = st.sidebar.multiselect("Partidos", partidos_disp)
 ufs_disp = sorted(df_principal['sgUF'].dropna().unique())
 uf_sel = st.sidebar.multiselect("Estados (UF)", ufs_disp)
 
-# Aplicação dos filtros no dataframe principal
 df_filtrado = df_principal.copy()
-if nome_busca:
-    df_filtrado = df_filtrado[df_filtrado['txNomeParlamentar'].str.contains(nome_busca, case=False, na=False)]
+if nome_sel != "Todos":
+    df_filtrado = df_filtrado[df_filtrado['txNomeParlamentar'] == nome_sel]
 if partido_sel:
     df_filtrado = df_filtrado[df_filtrado['sgPartido'].isin(partido_sel)]
 if uf_sel:
