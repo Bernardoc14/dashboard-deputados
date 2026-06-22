@@ -3,7 +3,7 @@
 if [ ! -f "banco.db" ]; then
     echo "Baixando banco.db do Google Drive..."
     # Substitua a URL abaixo pelo link de compartilhamento real do seu arquivo
-    gdown "URL_DO_SEU_ARQUIVO_NO_DRIVE" -O banco.db
+    gdown "https://drive.google.com/file/d/1Gh32rQd6YadaGRqwFUucWAVkD84EkXtD/view?usp=sharing" -O banco.db
     echo "Download concluído."
 else
     echo "banco.db já existe."
